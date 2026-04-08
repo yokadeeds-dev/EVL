@@ -10,7 +10,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 
-from auth import require_user
+from auth import require_admin
 from acl import UserContext
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -23,10 +23,12 @@ MAX_FILE_SIZE_MB = 10
 @router.post("/upload")
 async def upload_document(
     file: UploadFile = File(...),
-    user: UserContext = Depends(require_user),
+    user: UserContext = Depends(require_admin),
 ):
     """Einzelnes Dokument in die Wissensbasis hochladen."""
-    suffix = Path(file.filename).suffix.lower()
+    # Nur den Dateinamen übernehmen – Pfad-Traversal via '../' verhindern
+    safe_name = Path(file.filename).name
+    suffix = Path(safe_name).suffix.lower()
     if suffix not in ALLOWED_EXTENSIONS:
         raise HTTPException(
             status_code=415,
@@ -34,7 +36,11 @@ async def upload_document(
         )
 
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    dest = UPLOAD_DIR / file.filename
+    dest = UPLOAD_DIR / safe_name
+
+    # Sicherheitscheck: Zielpfad muss innerhalb von UPLOAD_DIR liegen
+    if not dest.resolve().is_relative_to(UPLOAD_DIR.resolve()):
+        raise HTTPException(status_code=403, detail="Ungültiger Dateipfad.")
 
     size = 0
     with open(dest, "wb") as f:
@@ -72,6 +78,9 @@ def list_documents(user: UserContext = Depends(require_user)):
 def delete_document(filename: str, user: UserContext = Depends(require_user)):
     """Einzelnes Dokument aus der Wissensbasis löschen."""
     target = UPLOAD_DIR / filename
+    # Sicherheitscheck: Zielpfad muss innerhalb von UPLOAD_DIR liegen
+    if not target.resolve().is_relative_to(UPLOAD_DIR.resolve()):
+        raise HTTPException(status_code=403, detail="Ungültiger Dateipfad.")
     if not target.exists() or not target.is_file():
         raise HTTPException(status_code=404, detail="Datei nicht gefunden.")
     target.unlink()

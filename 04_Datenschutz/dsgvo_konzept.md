@@ -31,10 +31,11 @@ Der Content-Assistant verarbeitet ausschließlich nicht-personenbezogene Inhalts
 
 ### 3. Web-Interface (Mitarbeitende)
 
-- Keine Nutzer-Accounts, kein Login
-- Keine Cookies, kein Tracking, kein Analytics
+- Authentifizierung: OAuth2 Password Flow, JWT-Token (HS256, 1h Laufzeit) – kein dauerhafter Cookie
+- Nutzer-IDs: anwalt_a / anwalt_b / anwalt_c (Demo-Setup; in Production via AD/LDAP)
+- Keine Tracking-Cookies, kein Analytics
 - Logs: nur technische Request-Logs (Timestamp, Endpunkt, HTTP-Status) – keine Inhalte, keine IPs
-- Session-Daten: nur im Browser (kein Server-Side-State)
+- Session-Daten: JWT im Browser-Memory, nicht in localStorage oder Cookies gespeichert
 
 ---
 

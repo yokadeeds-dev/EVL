@@ -20,7 +20,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from auth import require_user
+from auth import require_user, require_admin
 from prompts import TEMPLATES
 from acl import UserContext, USERS
 from rag_engine import InMemoryQdrant, LegalRAGEngine, ingest_documents as engine_ingest_documents
@@ -203,7 +203,7 @@ def generate_text(req: GenerateRequest, user: UserContext = Depends(require_user
 
     try:
         message = llm_client.messages.create(
-            model=os.getenv("LLM_MODEL", "claude-opus-4-5-20251101"),
+            model=os.getenv("LLM_MODEL", "claude-opus-4-5"),
             max_tokens=1024,
             system=template["system"],
             messages=[{"role": "user", "content": user_prompt}],
@@ -224,7 +224,7 @@ def generate_text(req: GenerateRequest, user: UserContext = Depends(require_user
 
 
 @app.post("/admin/ingest")
-def ingest_documents(req: IngestRequest, user: UserContext = Depends(require_user)):
+def ingest_documents(req: IngestRequest, user: UserContext = Depends(require_admin)):
     """Wissensbasis einlesen."""
     if store is None or rag is None:
         raise HTTPException(status_code=503, detail="RAG-Pipeline nicht initialisiert.")
@@ -244,7 +244,7 @@ def ingest_documents(req: IngestRequest, user: UserContext = Depends(require_use
 
 
 @app.get("/admin/kb-status", response_model=KBStatusResponse)
-def kb_status(user: UserContext = Depends(require_user)):
+def kb_status(user: UserContext = Depends(require_admin)):
     """Wissensbasis-Status."""
     if store is None:
         raise HTTPException(status_code=503, detail="RAG-Pipeline nicht initialisiert.")
@@ -253,7 +253,7 @@ def kb_status(user: UserContext = Depends(require_user)):
 
 
 @app.delete("/admin/kb-reset")
-def kb_reset(user: UserContext = Depends(require_user)):
+def kb_reset(user: UserContext = Depends(require_admin)):
     """Wissensbasis vollständig leeren."""
     global store, rag
     if store is None:

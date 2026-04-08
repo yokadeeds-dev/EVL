@@ -145,7 +145,9 @@ export default function App() {
     }
   }
 
-  if (view === 'admin' && adminKey) return <AdminPanel adminKey={adminKey} />
+  if (view === 'admin' && adminKey) return (
+    <AdminPanel adminKey={adminKey} onLogout={() => { setView('main'); setAdminKey('') }} />
+  )
 
   return (
     <div className="min-h-screen bg-gray-50 py-10 px-4">
