@@ -20,9 +20,13 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from auth import require_admin, require_user
+from auth import require_user
 from prompts import TEMPLATES
-from rag import RAGPipeline
+from acl import UserContext, USERS
+from rag_engine import InMemoryQdrant, LegalRAGEngine, ingest_documents as engine_ingest_documents
+import synthetic_docs
+import jwt_auth
+from fastapi.security import OAuth2PasswordRequestForm
 
 load_dotenv()
 
@@ -49,14 +53,16 @@ def _check_rate_limit(api_key: str) -> None:
 
 # ── Globale Instanzen ────────────────────────────────────────────────────────
 
-rag: RAGPipeline | None = None
+store: InMemoryQdrant | None = None
+rag: LegalRAGEngine | None = None
 llm_client: anthropic.Anthropic | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global rag, llm_client
-    rag = RAGPipeline()
+    global store, rag, llm_client
+    store = InMemoryQdrant()
+    rag = LegalRAGEngine(store)
     llm_client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
     yield
 
@@ -82,6 +88,7 @@ class GenerateRequest(BaseModel):
     text_type: str = Field(..., pattern="^(seo|produkt|faq|leicht|social)$")
     topic: str = Field(..., min_length=3, max_length=500)
     use_rag: bool = Field(default=True)
+    target_mandant: str | None = None
 
 
 class GenerateResponse(BaseModel):
@@ -116,7 +123,7 @@ def get_status():
     """Öffentlicher Systemstatus – kein Auth erforderlich."""
     return {
         "status": "ok",
-        "knowledge_base_empty": rag is None or rag.is_empty(),
+        "knowledge_base_empty": store is None or store.count() == 0,
         "available_templates": list(TEMPLATES.keys()),
         "version": "1.1.0",
     }
@@ -126,15 +133,39 @@ def get_status():
 
 
 @app.get("/templates")
-def list_templates(api_key: str = Depends(require_user)):
+def list_templates(user: UserContext = Depends(require_user)):
     """Alle Template-IDs und Labels."""
     return [{"id": k, "label": v["label"]} for k, v in TEMPLATES.items()]
 
 
+@app.post("/auth/token")
+def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
+    """OAuth2 Login. Akzeptiert anwalt_a, anwalt_b, anwalt_c."""
+    user_id = form_data.username
+    if user_id not in USERS:
+        raise HTTPException(status_code=400, detail="Falscher Benutzername. Test-User: anwalt_a, anwalt_b, anwalt_c")
+    
+    jwt_token = jwt_auth.create_jwt({"sub": user_id})
+    return {"access_token": jwt_token, "token_type": "bearer"}
+
+
+@app.get("/me")
+def get_me(user: UserContext = Depends(require_user)):
+    """Aktuellen authentifizierten User zurückgeben."""
+    return {
+        "user_id": user.user_id,
+        "name": user.name,
+        "allowed_mandate": user.allowed_mandate,
+        "effective_allowed": user.effective_allowed(),
+        "chinese_wall_pairs": user.chinese_wall_pairs
+    }
+
+
 @app.post("/generate", response_model=GenerateResponse)
-def generate_text(req: GenerateRequest, api_key: str = Depends(require_user)):
-    """RAG-Retrieval + LLM-Generierung."""
-    _check_rate_limit(api_key)
+def generate_text(req: GenerateRequest, user: UserContext = Depends(require_user)):
+    """RAG-Retrieval + LLM-Generierung (ACL-geschützt)."""
+    # use user.user_id for rate limiting instead of api_key string
+    _check_rate_limit(user.user_id)
 
     if llm_client is None:
         raise HTTPException(status_code=503, detail="LLM-Client nicht initialisiert.")
@@ -145,10 +176,18 @@ def generate_text(req: GenerateRequest, api_key: str = Depends(require_user)):
     context = ""
     chunks_used = 0
     rag_active = False
-    if req.use_rag and rag and not rag.is_empty():
-        context = rag.retrieve(req.topic)
-        chunks_used = context.count("---") + 1 if context else 0
-        rag_active = bool(context)
+    if req.use_rag and rag and store and store.count() > 0:
+        if req.target_mandant and req.target_mandant in user.effective_allowed():
+            from dataclasses import replace
+            effective_user = replace(user, allowed_mandate=[req.target_mandant])
+        else:
+            effective_user = user
+            
+        query_results = rag.query(effective_user, req.topic, top_k=5)
+        valid_excerpts = [r.excerpt for r in query_results if r.acl_valid]
+        context = "\n\n---\n\n".join(valid_excerpts)
+        chunks_used = len(valid_excerpts)
+        rag_active = bool(chunks_used > 0)
 
     if not context:
         context = (
@@ -185,37 +224,43 @@ def generate_text(req: GenerateRequest, api_key: str = Depends(require_user)):
 
 
 @app.post("/admin/ingest")
-def ingest_documents(req: IngestRequest, api_key: str = Depends(require_admin)):
-    """Wissensbasis einlesen (nur Admin)."""
-    if rag is None:
+def ingest_documents(req: IngestRequest, user: UserContext = Depends(require_user)):
+    """Wissensbasis einlesen."""
+    if store is None or rag is None:
         raise HTTPException(status_code=503, detail="RAG-Pipeline nicht initialisiert.")
     try:
-        count = rag.ingest_documents(req.path)
-        return {"status": "ok", "documents_ingested": count}
+        import os
+        os.makedirs(req.path, exist_ok=True)
+        meta_path = f"{req.path}/metadata.json"
+        
+        # Generiere Sandbox Docs mit Mandant-Metadaten falls abwesend
+        if not os.path.exists(meta_path):
+            synthetic_docs.generate_synthetic_docs(num_docs=100, out_dir=req.path)
+            
+        stats = engine_ingest_documents(meta_path, req.path, store, verbose=True)
+        return {"status": "ok", "documents_ingested": stats["ingested"]}
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
 
 @app.get("/admin/kb-status", response_model=KBStatusResponse)
-def kb_status(api_key: str = Depends(require_admin)):
-    """Wissensbasis-Status (nur Admin)."""
-    if rag is None:
+def kb_status(user: UserContext = Depends(require_user)):
+    """Wissensbasis-Status."""
+    if store is None:
         raise HTTPException(status_code=503, detail="RAG-Pipeline nicht initialisiert.")
-    count = rag._collection.count()
+    count = store.count()
     return {"document_count": count, "is_empty": count == 0}
 
 
 @app.delete("/admin/kb-reset")
-def kb_reset(api_key: str = Depends(require_admin)):
-    """Wissensbasis vollständig leeren (nur Admin). Nicht rückgängig machbar."""
-    if rag is None:
+def kb_reset(user: UserContext = Depends(require_user)):
+    """Wissensbasis vollständig leeren."""
+    global store, rag
+    if store is None:
         raise HTTPException(status_code=503, detail="RAG-Pipeline nicht initialisiert.")
-    rag._client.delete_collection(rag.COLLECTION_NAME)
-    rag._collection = rag._client.get_or_create_collection(
-        name=rag.COLLECTION_NAME,
-        metadata={"hnsw:space": "cosine"},
-    )
-    rag._index = None
+    
+    store = InMemoryQdrant()
+    rag = LegalRAGEngine(store)
     return {"status": "ok", "message": "Wissensbasis geleert."}
 
 
