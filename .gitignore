@@ -1,0 +1,21 @@
+# Node
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+node_modules/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+.env
+
+# Database / RAG
+chroma_db/
+knowledge_base/
+
+# OS
+.DS_Store
+Thumbs.db
