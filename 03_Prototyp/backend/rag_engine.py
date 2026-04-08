@@ -48,8 +48,9 @@ class QueryResult:
 
 
 # ── Minimales Embedding (TF-IDF-ähnlich, kein Modell nötig) ──────────────────
-
-VOCAB_SIZE = 256
+# VOCAB_SIZE = 384 entspricht der Ausgabe-Dimension von intfloat/multilingual-e5-small,
+# damit Fallback-Embeddings und echte Modell-Embeddings kompatibel bleiben.
+VOCAB_SIZE = 384
 
 def _simple_embed(text: str) -> list[float]:
     """

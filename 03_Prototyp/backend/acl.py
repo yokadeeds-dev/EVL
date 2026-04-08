@@ -18,6 +18,7 @@ class UserContext:
     name:           str
     allowed_mandate: list[str]         # Mandate auf die der User Zugriff hat
     chinese_wall_pairs: list[tuple[str, str]] = field(default_factory=list)
+    is_admin:       bool = False
 
     def effective_allowed(self) -> list[str]:
         """Mandate nach Chinese-Wall-Abzug."""
@@ -53,6 +54,7 @@ USERS: dict[str, UserContext] = {
         name="Dr. Anna Kraft",
         allowed_mandate=["M001", "M003"],
         chinese_wall_pairs=CHINESE_WALLS,
+        is_admin=True,   # einziger Admin im Demo-Setup
     ),
     "anwalt_b": UserContext(
         user_id="anwalt_b",

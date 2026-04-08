@@ -48,7 +48,7 @@ function DocRow({ doc, onDelete }) {
   )
 }
 
-export default function AdminPanel({ adminKey }) {
+export default function AdminPanel({ adminKey, onLogout }) {
   const [kbStatus, setKbStatus] = useState(null)
   const [documents, setDocuments] = useState([])
   const [uploading, setUploading] = useState(false)
@@ -58,7 +58,8 @@ export default function AdminPanel({ adminKey }) {
   const [message, setMessage] = useState(null)
   const fileRef = useRef()
 
-  const headers = { 'X-API-Key': adminKey }
+  // Fix: JWT Bearer Token statt X-API-Key
+  const headers = { 'Authorization': `Bearer ${adminKey}` }
 
   const flash = (text, type = 'ok') => {
     setMessage({ text, type })
@@ -138,7 +139,17 @@ export default function AdminPanel({ adminKey }) {
 
       {/* Header */}
       <div className="mb-8">
-        <div className="text-xs text-gray-400 font-mono mb-1">EVL-2026-002 · Admin</div>
+        <div className="flex items-center justify-between mb-1">
+          <div className="text-xs text-gray-400 font-mono">EVL-2026-002 · Admin</div>
+          {onLogout && (
+            <button
+              onClick={onLogout}
+              className="text-xs text-gray-400 hover:text-gray-700 border border-gray-200 rounded px-2 py-1"
+            >
+              ← Zurück zur App
+            </button>
+          )}
+        </div>
         <h1 className="text-2xl font-semibold text-gray-900">Wissensbasis verwalten</h1>
       </div>
 

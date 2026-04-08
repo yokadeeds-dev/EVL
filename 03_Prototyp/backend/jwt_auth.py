@@ -1,10 +1,13 @@
 import hmac
 import hashlib
 import json
+import os
 import time
 import base64
 
-SECRET_KEY = "super-secret-kanzlei-key"
+SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "")
+if not SECRET_KEY:
+    raise RuntimeError("JWT_SECRET_KEY ist nicht gesetzt! Bitte in .env eintragen.")
 
 def _b64enc(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).decode('utf-8').rstrip('=')
