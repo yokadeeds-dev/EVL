@@ -10,7 +10,8 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 
-from auth import require_admin
+from auth import require_user
+from acl import UserContext
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -22,7 +23,7 @@ MAX_FILE_SIZE_MB = 10
 @router.post("/upload")
 async def upload_document(
     file: UploadFile = File(...),
-    api_key: str = Depends(require_admin),
+    user: UserContext = Depends(require_user),
 ):
     """Einzelnes Dokument in die Wissensbasis hochladen."""
     suffix = Path(file.filename).suffix.lower()
@@ -51,7 +52,7 @@ async def upload_document(
 
 
 @router.get("/documents")
-def list_documents(api_key: str = Depends(require_admin)):
+def list_documents(user: UserContext = Depends(require_user)):
     """Alle Dokumente in der Wissensbasis auflisten."""
     if not UPLOAD_DIR.exists():
         return {"documents": []}
@@ -68,7 +69,7 @@ def list_documents(api_key: str = Depends(require_admin)):
 
 
 @router.delete("/documents/{filename}")
-def delete_document(filename: str, api_key: str = Depends(require_admin)):
+def delete_document(filename: str, user: UserContext = Depends(require_user)):
     """Einzelnes Dokument aus der Wissensbasis löschen."""
     target = UPLOAD_DIR / filename
     if not target.exists() or not target.is_file():

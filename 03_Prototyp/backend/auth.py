@@ -10,44 +10,21 @@ Setup: API-Keys in .env eintragen:
 import os
 import secrets
 from fastapi import HTTPException, Security, status
-from fastapi.security import APIKeyHeader
+from fastapi.security import OAuth2PasswordBearer
+import jwt_auth
+from acl import get_user, UserContext
 
-_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token")
 
-
-def _load_keys(env_var: str) -> set[str]:
-    raw = os.getenv(env_var, "")
-    return {k.strip() for k in raw.split(",") if k.strip()}
-
-
-def _get_keys() -> tuple[set[str], set[str]]:
-    user_keys = _load_keys("USER_API_KEYS")
-    admin_keys = _load_keys("ADMIN_API_KEYS")
-    return user_keys, admin_keys
-
-
-def require_user(api_key: str = Security(_header)) -> str:
-    """Endpoint-Dependency: user oder admin Key akzeptiert."""
-    user_keys, admin_keys = _get_keys()
-    all_keys = user_keys | admin_keys
-    if not api_key or not secrets.compare_digest(
-        api_key, next((k for k in all_keys if secrets.compare_digest(api_key, k)), "")
-    ):
+def require_user(token: str = Security(oauth2_scheme)) -> UserContext:
+    """Endpoint-Dependency: validates JWT Token an returns UserContext."""
+    try:
+        payload = jwt_auth.verify_jwt(token)
+        user_id = payload.get("sub")
+        return get_user(user_id)
+    except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Ungültiger oder fehlender API-Key (Header: X-API-Key).",
+            detail=f"Ungültiger oder abgelaufener Token: {str(e)}",
+            headers={"WWW-Authenticate": "Bearer"},
         )
-    return api_key
-
-
-def require_admin(api_key: str = Security(_header)) -> str:
-    """Endpoint-Dependency: nur admin Key akzeptiert."""
-    _, admin_keys = _get_keys()
-    if not api_key or not any(
-        secrets.compare_digest(api_key, k) for k in admin_keys
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin-Rechte erforderlich.",
-        )
-    return api_key
