@@ -1,6 +1,6 @@
 """
 EVL-2026-002 · Content-Assistant Backend
-FastAPI + ChromaDB RAG + Anthropic Claude API + Auth + Rate-Limiting
+FastAPI + Postgres/pgvector RAG + Anthropic Claude API + Auth + Rate-Limiting
 
 Starten:
     cp .env.example .env  # Keys eintragen
@@ -36,8 +36,8 @@ RATE_LIMIT_REQUESTS = int(os.getenv("RATE_LIMIT_REQUESTS", "20"))
 RATE_LIMIT_WINDOW = int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60"))
 
 
-def _check_rate_limit(api_key: str) -> None:
-    if not redis_backend.check_rate_limit(api_key, RATE_LIMIT_REQUESTS, RATE_LIMIT_WINDOW):
+def _check_rate_limit(key: str) -> None:
+    if not redis_backend.check_rate_limit(key, RATE_LIMIT_REQUESTS, RATE_LIMIT_WINDOW):
         raise HTTPException(
             status_code=429,
             detail=f"Rate-Limit erreicht: max. {RATE_LIMIT_REQUESTS} Anfragen / {RATE_LIMIT_WINDOW}s.",
@@ -171,13 +171,16 @@ def get_me(user: UserContext = Depends(require_user)):
 @app.post("/generate", response_model=GenerateResponse)
 def generate_text(req: GenerateRequest, user: UserContext = Depends(require_user)):
     """RAG-Retrieval + LLM-Generierung (ACL-geschützt)."""
-    # use user.user_id for rate limiting instead of api_key string
+    # Rate-Limit pro User-Identität (nicht pro API-Key-String).
     _check_rate_limit(user.user_id)
 
     if llm_client is None:
         raise HTTPException(status_code=503, detail="LLM-Client nicht initialisiert.")
 
     template = TEMPLATES[req.text_type]
+
+    # PII-Check auf dem User-Input VOR teurer RAG-/LLM-Arbeit (F6: früh ablehnen).
+    _check_for_pii(req.topic)
 
     # RAG
     context = ""
@@ -202,9 +205,6 @@ def generate_text(req: GenerateRequest, user: UserContext = Depends(require_user
             "Allgemeines Branchenwissen verwenden und darauf hinweisen, "
             "dass der Text mit unternehmensspezifischen Informationen ergänzt werden sollte."
         )
-
-    # PII-Check
-    _check_for_pii(req.topic)
 
     user_prompt = template["user_template"].format(context=context, topic=req.topic)
 

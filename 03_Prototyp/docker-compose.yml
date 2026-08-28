@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
 
   backend:
@@ -16,9 +14,8 @@ services:
       db:
         condition: service_healthy
     volumes:
-      # Wissensbasis und ChromaDB persistent auf dem Host
+      # Wissensbasis persistent auf dem Host
       - ./backend/knowledge_base:/app/knowledge_base
-      - chroma_data:/app/chroma_db
     expose:
       - "8000"
     healthcheck:
@@ -75,5 +72,4 @@ services:
       retries: 5
 
 volumes:
-  chroma_data:
   pg_data:

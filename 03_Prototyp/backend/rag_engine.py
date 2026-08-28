@@ -28,7 +28,6 @@ class Document:
     mandant_id:          str | None
     category:            str
     title:               str
-    chinese_wall_exclude: list[str]
     doc_hash:            str
     embedding:           list[float]
 
@@ -75,7 +74,7 @@ class SemanticEmbedder:
             if self.model is None:
                 from sentence_transformers import SentenceTransformer
                 print("Lade Vektor-Modell (intfloat/multilingual-e5-small)...")
-                # Dies lädt das Modell beim ersten Embedding herunter (ca. 100-200MB)
+                # Dies lädt das Modell beim ersten Embedding herunter (~450MB)
                 self.model = SentenceTransformer("intfloat/multilingual-e5-small")
             
             # e5-small generiert 384-dimensionale Embeddings
@@ -114,8 +113,13 @@ class InMemoryQdrant:
             data = {k: dataclasses.asdict(v) for k, v in self._store.items()}
             json.dump(data, f)
 
-    def upsert(self, doc: Document) -> None:
+    def upsert(self, doc: Document, persist: bool = True) -> None:
         self._store[doc.doc_id] = doc
+        if persist:
+            self._save()
+
+    def flush(self) -> None:
+        """Persistiert den Stand einmalig (nach Batch-Ingest mit persist=False)."""
         self._save()
 
     def search(
@@ -155,15 +159,12 @@ class InMemoryQdrant:
             if not passed_should:
                 return False
 
-        # must_not: keine Bedingung darf zutreffen
+        # must_not: keine Bedingung darf zutreffen (Chinese Wall: verbotene Mandate)
         must_not = f.get("must_not", [])
         for cond in must_not:
             if "match" in cond and "any" in cond["match"]:
-                key = cond["key"]
-                if key == "chinese_wall_exclude":
-                    for excluded_user in cond["match"]["any"]:
-                        if excluded_user in doc.chinese_wall_exclude:
-                            return False
+                if cond.get("key") == "mandant_id" and doc.mandant_id in cond["match"]["any"]:
+                    return False
 
         return True
 
@@ -176,25 +177,6 @@ class InMemoryQdrant:
 
 
 # ── Ingest-Pipeline ───────────────────────────────────────────────────────────
-
-CHINESE_WALL_PAIRS = [("M001", "M002")]
-
-def _compute_chinese_wall_exclude(mandant_id: str | None) -> list[str]:
-    """
-    Welche User-IDs sollen dieses Dokument NICHT sehen wegen Chinese Wall?
-    """
-    if mandant_id is None:
-        return []
-    from acl import USERS
-    excluded = []
-    for user in USERS.values():
-        # Wenn User auf einer Gegenseite einer Chinese Wall sitzt
-        for m_a, m_b in CHINESE_WALL_PAIRS:
-            if mandant_id == m_a and m_b in user.allowed_mandate:
-                excluded.append(user.user_id)
-            elif mandant_id == m_b and m_a in user.allowed_mandate:
-                excluded.append(user.user_id)
-    return list(set(excluded))
 
 
 def ingest_documents(
@@ -229,7 +211,6 @@ def ingest_documents(
                 continue
 
             embedding = embedder.embed(text)
-            cw_exclude = _compute_chinese_wall_exclude(meta.get("mandant_id"))
 
             doc = Document(
                 doc_id=meta["doc_id"],
@@ -237,11 +218,12 @@ def ingest_documents(
                 mandant_id=meta.get("mandant_id"),
                 category=meta["category"],
                 title=meta["title"],
-                chinese_wall_exclude=cw_exclude,
                 doc_hash=doc_hash,
                 embedding=embedding,
             )
-            store.upsert(doc)
+            # persist=False: nicht je upsert die ganze JSON schreiben (F7: O(n²)
+            # beim Batch-Ingest) — einmaliges flush() nach der Schleife.
+            store.upsert(doc, persist=False)
             existing_hashes.add(doc_hash)
             stats["ingested"] += 1
 
@@ -255,6 +237,7 @@ def ingest_documents(
             if verbose:
                 print(f"  Fehler bei {meta.get('filename','?')}: {e}")
 
+    store.flush()
     elapsed = time.perf_counter() - t0
     stats["elapsed_s"] = round(elapsed, 2)
     stats["docs_per_s"] = round(stats["ingested"] / elapsed, 1) if elapsed > 0 else 0
@@ -294,11 +277,7 @@ class LegalRAGEngine:
         # Schritt 4: Nachgelagerte ACL-Validierung (Audit-Layer)
         results = []
         for doc, score in raw_results:
-            valid, reason = validate_result(
-                {"mandant_id": doc.mandant_id,
-                 "chinese_wall_exclude": doc.chinese_wall_exclude},
-                user,
-            )
+            valid, reason = validate_result({"mandant_id": doc.mandant_id}, user)
             excerpt = doc.text[:200].replace("\n", " ") + "…"
             results.append(QueryResult(
                 doc_id=doc.doc_id,
