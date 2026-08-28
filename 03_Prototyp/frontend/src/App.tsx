@@ -1,9 +1,18 @@
 import { useState, useEffect } from 'react'
-import AdminPanel from './admin/AdminPanel.jsx'
+import type { ReactNode } from 'react'
+import AdminPanel from './admin/AdminPanel'
+import type {
+  ApiError,
+  GenerateResponse,
+  GenerateResult,
+  TextType,
+  TokenResponse,
+  UserContext,
+} from './types'
 
 const API_BASE = '/api'
 
-const TEMPLATE_LABELS = {
+const TEMPLATE_LABELS: Record<TextType, string> = {
   seo: 'SEO-Text',
   produkt: 'Produktbeschreibung',
   faq: 'FAQ-Antwort',
@@ -11,8 +20,11 @@ const TEMPLATE_LABELS = {
   social: 'Social-Media-Post',
 }
 
-function Badge({ children, variant = 'gray' }) {
-  const colors = {
+type BadgeVariant = 'gray' | 'green' | 'blue' | 'red'
+type View = 'main' | 'admin-login' | 'admin'
+
+function Badge({ children, variant = 'gray' }: { children: ReactNode; variant?: BadgeVariant }) {
+  const colors: Record<BadgeVariant, string> = {
     gray: 'bg-gray-100 text-gray-600',
     green: 'bg-green-100 text-green-700',
     blue: 'bg-blue-100 text-blue-700',
@@ -25,7 +37,7 @@ function Badge({ children, variant = 'gray' }) {
   )
 }
 
-function CopyButton({ text }) {
+function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false)
 
   const handleCopy = async () => {
@@ -45,70 +57,71 @@ function CopyButton({ text }) {
 }
 
 export default function App() {
-  const [view, setView] = useState("main") // "main" | "admin"
-  const [adminKey, setAdminKey] = useState("")
-  const [username, setUsername] = useState("")
-  const [jwtToken, setJwtToken] = useState("")
-  const [userContext, setUserContext] = useState(null)
-  
-  const [textType, setTextType] = useState('seo')
+  const [view, setView] = useState<View>('main')
+  const [adminKey, setAdminKey] = useState('')
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [jwtToken, setJwtToken] = useState('')
+  const [userContext, setUserContext] = useState<UserContext | null>(null)
+
+  const [textType, setTextType] = useState<TextType>('seo')
   const [topic, setTopic] = useState('')
   const [useRag, setUseRag] = useState(true)
-  const [targetMandant, setTargetMandant] = useState("")
-  
+  const [targetMandant, setTargetMandant] = useState('')
+
   const [loading, setLoading] = useState(false)
-  const [result, setResult] = useState(null)
-  const [error, setError] = useState(null)
-  const [apiReady, setApiReady] = useState(null)
+  const [result, setResult] = useState<GenerateResult | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [apiReady, setApiReady] = useState<boolean | null>(null)
 
   // Backend-Status prüfen
   useEffect(() => {
     fetch(`${API_BASE}/status`)
       .then((r) => r.json())
-      .then((data) => setApiReady(data.status === 'ok'))
+      .then((data: { status: string }) => setApiReady(data.status === 'ok'))
       .catch(() => setApiReady(false))
   }, [])
 
   // User-Kontext prüfen (ACL)
   useEffect(() => {
     if (!jwtToken) {
-       setUserContext(null)
-       return
+      setUserContext(null)
+      return
     }
-    fetch(`${API_BASE}/me`, { headers: { 'Authorization': `Bearer ${jwtToken}` } })
-      .then(res => res.ok ? res.json() : null)
-      .then(data => {
-        setUserContext(data);
+    fetch(`${API_BASE}/me`, { headers: { Authorization: `Bearer ${jwtToken}` } })
+      .then((res) => (res.ok ? (res.json() as Promise<UserContext>) : null))
+      .then((data) => {
+        setUserContext(data)
         if (data && data.effective_allowed) {
-          setTargetMandant("");
+          setTargetMandant('')
         }
       })
       .catch(() => setUserContext(null))
   }, [jwtToken])
 
   const handleLogin = async () => {
-    if (!username) return
+    if (!username || !password) return
     setError(null)
-    const formData = new URLSearchParams();
-    formData.append("username", username);
-    formData.append("password", "xxx"); // password ignored by dummy oauth2
+    const formData = new URLSearchParams()
+    formData.append('username', username)
+    formData.append('password', password)
     try {
       const r = await fetch(`${API_BASE}/auth/token`, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: formData
-      });
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: formData,
+      })
       if (r.ok) {
-        const data = await r.json();
-        setJwtToken(data.access_token);
+        const data = (await r.json()) as TokenResponse
+        setJwtToken(data.access_token)
       } else {
-        const err = await r.json()
-        setJwtToken("");
-        setUserContext(null);
-        setError(err.detail || "Login fehlgeschlagen.");
+        const err = (await r.json()) as ApiError
+        setJwtToken('')
+        setUserContext(null)
+        setError(err.detail || 'Login fehlgeschlagen.')
       }
     } catch {
-       setError("Server nicht erreichbar.");
+      setError('Server nicht erreichbar.')
     }
   }
 
@@ -119,46 +132,60 @@ export default function App() {
     setResult(null)
 
     try {
-      const payload = { text_type: textType, topic: topic.trim(), use_rag: useRag };
-      if (targetMandant) payload.target_mandant = targetMandant;
-      
+      const payload: {
+        text_type: TextType
+        topic: string
+        use_rag: boolean
+        target_mandant?: string
+      } = { text_type: textType, topic: topic.trim(), use_rag: useRag }
+      if (targetMandant) payload.target_mandant = targetMandant
+
       const res = await fetch(`${API_BASE}/generate`, {
         method: 'POST',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${jwtToken}`
+          Authorization: `Bearer ${jwtToken}`,
         },
         body: JSON.stringify(payload),
       })
 
       if (!res.ok) {
-        const err = await res.json()
+        const err = (await res.json()) as ApiError
         throw new Error(err.detail || `HTTP ${res.status}`)
       }
 
-      const data = await res.json()
-      setResult({ ...data, mandant: targetMandant }) // save mandant to display warning correctly
+      const data = (await res.json()) as GenerateResponse
+      setResult({ ...data, mandant: targetMandant })
     } catch (e) {
-      setError(e.message)
+      setError(e instanceof Error ? e.message : 'Unbekannter Fehler')
     } finally {
       setLoading(false)
     }
   }
 
-  if (view === 'admin' && adminKey) return (
-    <AdminPanel adminKey={adminKey} onLogout={() => { setView('main'); setAdminKey('') }} />
-  )
+  if (view === 'admin' && adminKey)
+    return (
+      <AdminPanel
+        adminKey={adminKey}
+        onLogout={() => {
+          setView('main')
+          setAdminKey('')
+        }}
+      />
+    )
 
   return (
     <div className="min-h-screen bg-gray-50 py-10 px-4">
       {view === 'admin-login' && (
         <AdminLoginModal
-          onLogin={(k) => { setAdminKey(k); setView('admin') }}
+          onLogin={(k) => {
+            setAdminKey(k)
+            setView('admin')
+          }}
           onClose={() => setView('main')}
         />
       )}
       <div className="max-w-2xl mx-auto">
-
         {/* Header */}
         <div className="mb-8">
           <div className="flex items-center justify-between mb-1">
@@ -166,9 +193,7 @@ export default function App() {
               <span className="text-xs text-gray-400 font-mono">EVL-2026-002</span>
               {apiReady === true && <Badge variant="green">API verbunden</Badge>}
               {apiReady === false && <Badge>API nicht erreichbar</Badge>}
-              {userContext && (
-                <Badge variant="blue">Eingeloggt als: {userContext.name}</Badge>
-              )}
+              {userContext && <Badge variant="blue">Eingeloggt als: {userContext.name}</Badge>}
             </div>
             <button
               onClick={() => setView('admin-login')}
@@ -185,25 +210,31 @@ export default function App() {
 
         {/* Hinweis KI-generiert */}
         <div className="mb-6 text-xs text-gray-400 bg-gray-100 rounded px-3 py-2">
-          Dieser Assistent erstellt KI-generierte Entwürfe. Alle Texte müssen vor
-          Veröffentlichung menschlich geprüft und freigegeben werden.
+          Dieser Assistent erstellt KI-generierte Entwürfe. Alle Texte müssen vor Veröffentlichung
+          menschlich geprüft und freigegeben werden.
         </div>
 
         {/* Formular */}
         <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
           <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Benutzerkonto (SSO)
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Benutzerkonto (SSO)</label>
             <div className="flex gap-2">
               <input
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="anwalt_a, anwalt_b, anwalt_c..."
+                placeholder="anwalt_a, anwalt_b, anwalt_c…"
                 className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
-              <button 
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+                placeholder="Passwort"
+                className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <button
                 onClick={handleLogin}
                 className="bg-gray-200 text-gray-700 font-medium px-4 py-2 rounded-lg text-sm hover:bg-gray-300 transition"
               >
@@ -223,32 +254,32 @@ export default function App() {
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="">-- Alle berechtigten Mandate --</option>
-                {userContext.effective_allowed.map(m => (
-                  <option key={m} value={m}>{m}</option>
+                {userContext.effective_allowed.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
                 ))}
               </select>
             </div>
           )}
 
           <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Texttyp
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Texttyp</label>
             <select
               value={textType}
-              onChange={(e) => setTextType(e.target.value)}
+              onChange={(e) => setTextType(e.target.value as TextType)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
-              {Object.entries(TEMPLATE_LABELS).map(([id, label]) => (
-                <option key={id} value={id}>{label}</option>
+              {(Object.entries(TEMPLATE_LABELS) as [TextType, string][]).map(([id, label]) => (
+                <option key={id} value={id}>
+                  {label}
+                </option>
               ))}
             </select>
           </div>
 
           <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Thema / Stichwörter
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Thema / Stichwörter</label>
             <textarea
               value={topic}
               onChange={(e) => setTopic(e.target.value)}
@@ -299,13 +330,15 @@ export default function App() {
               </div>
               <CopyButton text={result.result} />
             </div>
-            
+
             {result.rag_active && (
               <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-red-700 text-xs font-semibold">
-                ⚠️ Vorsicht: Sensible Daten aus {result.mandant ? `Mandat ${result.mandant}` : "verschiedenen Mandaten"} verwendet. Unterliegt § 203 StGB (Anwaltliche Schweigepflicht).
+                ⚠️ Vorsicht: Sensible Daten aus{' '}
+                {result.mandant ? `Mandat ${result.mandant}` : 'verschiedenen Mandaten'} verwendet.
+                Unterliegt § 203 StGB (Anwaltliche Schweigepflicht).
               </div>
             )}
-            
+
             <pre className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed font-sans mt-2">
               {result.result}
             </pre>
@@ -314,50 +347,83 @@ export default function App() {
             </p>
           </div>
         )}
-
       </div>
     </div>
   )
 }
 
 // Admin-Login-Modal-Komponente
-export function AdminLoginModal({ onLogin, onClose }) {
-  const [username, setUsername] = useState("")
+export function AdminLoginModal({
+  onLogin,
+  onClose,
+}: {
+  onLogin: (token: string) => void
+  onClose: () => void
+}) {
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
   const [error, setError] = useState(false)
 
   const tryLogin = async () => {
-    // We now just mint a token and do health check as admin check is removed. In reality, we'd need an admin role check.
     const formData = new URLSearchParams()
-    formData.append("username", username)
-    formData.append("password", "xxx")
-    const r1 = await fetch('/api/auth/token', { method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: formData })
-    if (!r1.ok) { setError(true); setTimeout(() => setError(false), 2000); return; }
-    
-    const data = await r1.json()
-    const r2 = await fetch('/api/admin/kb-status', { headers: { 'Authorization': `Bearer ${data.access_token}` } })
-    if (r2.ok) { onLogin(data.access_token) }
-    else { setError(true); setTimeout(() => setError(false), 2000) }
+    formData.append('username', username)
+    formData.append('password', password)
+    const r1 = await fetch('/api/auth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: formData,
+    })
+    if (!r1.ok) {
+      setError(true)
+      setTimeout(() => setError(false), 2000)
+      return
+    }
+
+    const data = (await r1.json()) as TokenResponse
+    // Admin-Rolle serverseitig prüfen: require_admin gibt 403 für Nicht-Admins.
+    const r2 = await fetch('/api/admin/kb-status', {
+      headers: { Authorization: `Bearer ${data.access_token}` },
+    })
+    if (r2.ok) {
+      onLogin(data.access_token)
+    } else {
+      setError(true)
+      setTimeout(() => setError(false), 2000)
+    }
   }
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
       <div className="bg-white rounded-xl border border-gray-200 p-6 w-80">
         <h2 className="text-base font-semibold text-gray-900 mb-1">Admin-Bereich</h2>
-        <p className="text-xs text-gray-500 mb-4">Admin-User eingeben</p>
+        <p className="text-xs text-gray-500 mb-4">Admin-User + Passwort eingeben</p>
         <input
           type="text"
-          placeholder="anwalt_a (Simuliert Admin)"
+          placeholder="anwalt_a (Admin)"
           value={username}
-          onChange={e => setUsername(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && tryLogin()}
+          onChange={(e) => setUsername(e.target.value)}
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        <input
+          type="password"
+          placeholder="Passwort"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && tryLogin()}
           className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
-        {error && <p className="text-xs text-red-500 mb-2">Ungültiger Admin.</p>}
+        {error && <p className="text-xs text-red-500 mb-2">Ungültiger Admin oder Passwort.</p>}
         <div className="flex gap-2">
-          <button onClick={tryLogin} className="flex-1 bg-gray-900 text-white text-sm py-2 rounded-lg hover:bg-gray-700">
+          <button
+            onClick={tryLogin}
+            className="flex-1 bg-gray-900 text-white text-sm py-2 rounded-lg hover:bg-gray-700"
+          >
             Anmelden
           </button>
-          <button onClick={onClose} className="px-3 py-2 border border-gray-200 rounded-lg text-sm hover:bg-gray-50">
+          <button
+            onClick={onClose}
+            className="px-3 py-2 border border-gray-200 rounded-lg text-sm hover:bg-gray-50"
+          >
             ✕
           </button>
         </div>
