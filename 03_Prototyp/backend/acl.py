@@ -6,7 +6,39 @@ Kernprinzip: Kein Code-Pfad führt zu einer ungefilterten Query.
 build_filter() ist der einzige Einstiegspunkt — mandatory, nicht optional.
 """
 
+import hashlib
+import hmac
+import os
 from dataclasses import dataclass, field
+
+# ── Passwort-Hashing (pbkdf2-hmac-sha256, Stdlib – keine Extra-Dependency) ────
+#
+# In Production kommen Hashes aus AD/LDAP bzw. einer User-DB. Für das Demo-Setup
+# werden sie beim Import aus _DEMO_PASSWORDS erzeugt (frischer Salt pro Start).
+
+_PBKDF2_ITERATIONS = 200_000
+
+
+def hash_password(password: str, salt: bytes | None = None) -> str:
+    """Erzeugt 'salt_hex:hash_hex'. Salt zufällig, falls nicht angegeben."""
+    if salt is None:
+        salt = os.urandom(16)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, _PBKDF2_ITERATIONS)
+    return f"{salt.hex()}:{dk.hex()}"
+
+
+def verify_password(password: str, stored: str) -> bool:
+    """Konstantzeit-Vergleich gegen einen 'salt_hex:hash_hex'-Eintrag."""
+    if not stored or ":" not in stored:
+        return False
+    salt_hex, dk_hex = stored.split(":", 1)
+    try:
+        salt = bytes.fromhex(salt_hex)
+    except ValueError:
+        return False
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, _PBKDF2_ITERATIONS)
+    return hmac.compare_digest(dk.hex(), dk_hex)
+
 
 # ── Nutzer-Kontext (kommt aus JWT in Production) ──────────────────────────────
 
@@ -17,6 +49,7 @@ class UserContext:
     allowed_mandate: list[str]         # Mandate auf die der User Zugriff hat
     chinese_wall_pairs: list[tuple[str, str]] = field(default_factory=list)
     is_admin:       bool = False
+    password_hash:  str = ""           # 'salt_hex:hash_hex'; Demo: siehe unten
 
     def effective_allowed(self) -> list[str]:
         """Mandate nach Chinese-Wall-Abzug."""
@@ -69,10 +102,40 @@ USERS: dict[str, UserContext] = {
 }
 
 
+# ── Demo-Passwörter ───────────────────────────────────────────────────────────
+# NUR für das Demo-Setup. In Production: Hashes aus AD/LDAP, keine Klartext-Liste
+# im Code. Beim Import wird pro User ein frischer Salt-Hash erzeugt.
+
+_DEMO_PASSWORDS = {
+    "anwalt_a": os.getenv("DEMO_PW_ANWALT_A", "kraft-demo-2026"),
+    "anwalt_b": os.getenv("DEMO_PW_ANWALT_B", "schuster-demo-2026"),
+    "anwalt_c": os.getenv("DEMO_PW_ANWALT_C", "voss-demo-2026"),
+}
+
+for _uid, _pw in _DEMO_PASSWORDS.items():
+    USERS[_uid].password_hash = hash_password(_pw)
+
+
 def get_user(user_id: str) -> UserContext:
     if user_id not in USERS:
         raise ValueError(f"Unbekannter User: {user_id}")
     return USERS[user_id]
+
+
+def authenticate(user_id: str, password: str) -> UserContext | None:
+    """Prüft User + Passwort in Konstantzeit. Gibt None bei Fehlschlag zurück.
+
+    Verifiziert immer gegen einen Hash (auch bei unbekanntem User), um
+    Timing-Unterschiede zwischen 'User existiert nicht' und 'falsches Passwort'
+    zu vermeiden (User-Enumeration)."""
+    user = USERS.get(user_id)
+    stored = user.password_hash if user else _DUMMY_HASH
+    ok = verify_password(password, stored)
+    return user if (ok and user is not None) else None
+
+
+# Dummy-Hash für Konstantzeit-Verhalten bei unbekannten Usern.
+_DUMMY_HASH = hash_password("dummy-password-never-matches")
 
 
 # ── Filter-Builder für Qdrant ────────────────────────────────────────────────
