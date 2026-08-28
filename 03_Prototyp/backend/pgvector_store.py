@@ -29,6 +29,21 @@ CREATE TABLE IF NOT EXISTS documents (
     doc_hash             TEXT NOT NULL,
     embedding            vector(384) NOT NULL
 );
+
+-- ANN-Index für die Similarity-Suche (ORDER BY embedding <=> qvec).
+-- Ohne diesen Index ist jede Query ein Full Scan über alle Zeilen; bei
+-- zehntausenden Dokumenten der erste Performance-Engpass. HNSW passt zur
+-- Cosine-Distanz (<=>), daher vector_cosine_ops.
+CREATE INDEX IF NOT EXISTS documents_embedding_hnsw
+    ON documents USING hnsw (embedding vector_cosine_ops);
+
+-- ACL-Vorfilter (WHERE, vor der Vektorsortierung):
+--   mandant_id ist skalar → B-Tree für "= ANY(...) / IS NULL".
+CREATE INDEX IF NOT EXISTS documents_mandant_id_idx
+    ON documents (mandant_id);
+--   chinese_wall_exclude ist ein TEXT[] → GIN für den Array-Overlap-Operator &&.
+CREATE INDEX IF NOT EXISTS documents_cw_exclude_gin
+    ON documents USING gin (chinese_wall_exclude);
 """
 
 
