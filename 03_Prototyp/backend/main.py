@@ -10,8 +10,6 @@ Starten:
 
 import os
 import re
-import time
-from collections import defaultdict
 from contextlib import asynccontextmanager
 
 import anthropic
@@ -22,6 +20,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field
 
 import jwt_auth
+import redis_backend
 import synthetic_docs
 from acl import USERS, UserContext
 from auth import require_admin, require_user
@@ -31,25 +30,18 @@ from rag_engine import ingest_documents as engine_ingest_documents
 
 load_dotenv()
 
-# ── Rate-Limiting (in-memory, per API-Key) ───────────────────────────────────
+# ── Rate-Limiting (Redis, prozessuebergreifend; In-Memory-Fallback) ──────────
 
 RATE_LIMIT_REQUESTS = int(os.getenv("RATE_LIMIT_REQUESTS", "20"))
 RATE_LIMIT_WINDOW = int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60"))
 
-_rate_store: dict[str, list[float]] = defaultdict(list)
-
 
 def _check_rate_limit(api_key: str) -> None:
-    now = time.time()
-    window_start = now - RATE_LIMIT_WINDOW
-    calls = [t for t in _rate_store[api_key] if t > window_start]
-    if len(calls) >= RATE_LIMIT_REQUESTS:
+    if not redis_backend.check_rate_limit(api_key, RATE_LIMIT_REQUESTS, RATE_LIMIT_WINDOW):
         raise HTTPException(
             status_code=429,
             detail=f"Rate-Limit erreicht: max. {RATE_LIMIT_REQUESTS} Anfragen / {RATE_LIMIT_WINDOW}s.",
         )
-    calls.append(now)
-    _rate_store[api_key] = calls
 
 
 # ── Globale Instanzen ────────────────────────────────────────────────────────
@@ -202,18 +194,26 @@ def generate_text(req: GenerateRequest, user: UserContext = Depends(require_user
 
     user_prompt = template["user_template"].format(context=context, topic=req.topic)
 
-    try:
-        message = llm_client.messages.create(
-            model=os.getenv("LLM_MODEL", "claude-opus-4-5"),
-            max_tokens=1024,
-            system=template["system"],
-            messages=[{"role": "user", "content": user_prompt}],
-        )
-    except anthropic.APIStatusError as e:
-        raise HTTPException(status_code=502, detail=f"LLM-API Fehler: {e.message}")
+    model = os.getenv("LLM_MODEL", "claude-opus-4-5")
+    # Cache-Key ueber alle preisbestimmenden Eingaben (Modell, System, Prompt inkl.
+    # ACL-gefiltertem RAG-Kontext) → nur identischer Input teilt einen Eintrag.
+    ck = redis_backend.cache_key(model, template["system"], user_prompt)
+    result_text = redis_backend.cache_get(ck)
+    if result_text is None:
+        try:
+            message = llm_client.messages.create(
+                model=model,
+                max_tokens=1024,
+                system=template["system"],
+                messages=[{"role": "user", "content": user_prompt}],
+            )
+        except anthropic.APIStatusError as e:
+            raise HTTPException(status_code=502, detail=f"LLM-API Fehler: {e.message}")
+        result_text = message.content[0].text
+        redis_backend.cache_set(ck, result_text)
 
     return GenerateResponse(
-        result=message.content[0].text,
+        result=result_text,
         text_type=req.text_type,
         label=template["label"],
         context_chunks_used=chunks_used,
