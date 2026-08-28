@@ -9,7 +9,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
 from acl import UserContext
-from auth import require_admin, require_user
+from auth import require_admin
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -56,7 +56,7 @@ async def upload_document(
 
 
 @router.get("/documents")
-def list_documents(user: UserContext = Depends(require_user)):
+def list_documents(user: UserContext = Depends(require_admin)):
     """Alle Dokumente in der Wissensbasis auflisten."""
     if not UPLOAD_DIR.exists():
         return {"documents": []}
@@ -73,7 +73,7 @@ def list_documents(user: UserContext = Depends(require_user)):
 
 
 @router.delete("/documents/{filename}")
-def delete_document(filename: str, user: UserContext = Depends(require_user)):
+def delete_document(filename: str, user: UserContext = Depends(require_admin)):
     """Einzelnes Dokument aus der Wissensbasis löschen."""
     target = UPLOAD_DIR / filename
     # Sicherheitscheck: Zielpfad muss innerhalb von UPLOAD_DIR liegen

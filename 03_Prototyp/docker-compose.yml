@@ -10,7 +10,8 @@ services:
       # ueberschreibt REDIS_URL aus .env: Redis ist im Compose-Netz unter "redis" erreichbar
       REDIS_URL: redis://redis:6379/0
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     volumes:
       # Wissensbasis und ChromaDB persistent auf dem Host
       - ./backend/knowledge_base:/app/knowledge_base
