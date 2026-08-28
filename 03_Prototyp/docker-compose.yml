@@ -6,6 +6,11 @@ services:
     build: ./backend
     restart: unless-stopped
     env_file: ./backend/.env
+    environment:
+      # ueberschreibt REDIS_URL aus .env: Redis ist im Compose-Netz unter "redis" erreichbar
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      - redis
     volumes:
       # Wissensbasis und ChromaDB persistent auf dem Host
       - ./backend/knowledge_base:/app/knowledge_base
@@ -36,6 +41,17 @@ services:
     depends_on:
       - backend
       - frontend
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    expose:
+      - "6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
 volumes:
   chroma_data:
