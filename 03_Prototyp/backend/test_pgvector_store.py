@@ -71,3 +71,34 @@ class TestPgVectorStore:
         store.upsert(d)
         store.upsert(d)
         assert store.count() == before + 1
+
+    def test_ann_index_used_for_vector_search(self):
+        """
+        Regression gegen den Full-Scan-Fall: die Similarity-Suche muss den
+        HNSW-Index nutzen, nicht sequentiell scannen. enable_seqscan=off zwingt
+        den Planner, den Index zu wählen, falls er verfügbar ist — fehlt der
+        Index, bleibt nur der (dann teure) Seq Scan und der Test schlägt fehl.
+        """
+        from pgvector_store import _vec_literal
+
+        store = _store()
+        p = uuid.uuid4().hex[:8]
+        for i in range(30):
+            store.upsert(_doc(f"{p}-{i}", f"vertrag nummer {i}", "M001", []))
+
+        qvec = _vec_literal(_simple_embed("vertrag"))
+        with store.pool.connection() as conn:
+            conn.execute("SET enable_seqscan = off")
+            try:
+                rows = conn.execute(
+                    "EXPLAIN (FORMAT TEXT) "
+                    "SELECT doc_id FROM documents "
+                    "ORDER BY embedding <=> %s::vector LIMIT 5",
+                    (qvec,),
+                ).fetchall()
+            finally:
+                conn.execute("SET enable_seqscan = on")
+
+        plan = "\n".join(r[0] for r in rows)
+        assert "Index Scan" in plan, f"HNSW-Index nicht genutzt:\n{plan}"
+        assert "Seq Scan" not in plan, f"Fällt auf Seq Scan zurück:\n{plan}"
