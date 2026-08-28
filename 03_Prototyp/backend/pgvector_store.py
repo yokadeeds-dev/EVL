@@ -25,7 +25,6 @@ CREATE TABLE IF NOT EXISTS documents (
     mandant_id           TEXT,
     category             TEXT NOT NULL,
     title                TEXT NOT NULL,
-    chinese_wall_exclude TEXT[] NOT NULL DEFAULT '{}',
     doc_hash             TEXT NOT NULL,
     embedding            vector(384) NOT NULL
 );
@@ -37,13 +36,10 @@ CREATE TABLE IF NOT EXISTS documents (
 CREATE INDEX IF NOT EXISTS documents_embedding_hnsw
     ON documents USING hnsw (embedding vector_cosine_ops);
 
--- ACL-Vorfilter (WHERE, vor der Vektorsortierung):
---   mandant_id ist skalar → B-Tree für "= ANY(...) / IS NULL".
+-- ACL-Vorfilter (WHERE, vor der Vektorsortierung): mandant_id ist skalar und
+-- deckt sowohl "= ANY(effective)" als auch den Chinese-Wall-Ausschluss ab.
 CREATE INDEX IF NOT EXISTS documents_mandant_id_idx
     ON documents (mandant_id);
---   chinese_wall_exclude ist ein TEXT[] → GIN für den Array-Overlap-Operator &&.
-CREATE INDEX IF NOT EXISTS documents_cw_exclude_gin
-    ON documents USING gin (chinese_wall_exclude);
 """
 
 
@@ -53,16 +49,16 @@ def _vec_literal(embedding: list[float]) -> str:
 
 
 def _parse_filter(qdrant_filter: dict) -> tuple[list[str], list[str]]:
-    """Zieht (erlaubte Mandate, auszuschliessende User-IDs) aus dem Qdrant-Filter."""
+    """Zieht (erlaubte Mandate, wall-verbotene Mandate) aus dem Qdrant-Filter."""
     allowed: list[str] = []
-    excluded: list[str] = []
+    forbidden: list[str] = []
     for cond in qdrant_filter.get("should", []):
         if cond.get("key") == "mandant_id" and "match" in cond:
             allowed = cond["match"].get("any", [])
     for cond in qdrant_filter.get("must_not", []):
-        if cond.get("key") == "chinese_wall_exclude" and "match" in cond:
-            excluded = cond["match"].get("any", [])
-    return allowed, excluded
+        if cond.get("key") == "mandant_id" and "match" in cond:
+            forbidden = cond["match"].get("any", [])
+    return allowed, forbidden
 
 
 class PgVectorStore:
@@ -75,22 +71,26 @@ class PgVectorStore:
         with self.pool.connection() as conn:
             conn.execute(_SCHEMA)
 
-    def upsert(self, doc: Document) -> None:
+    def upsert(self, doc: Document, persist: bool = True) -> None:
+        # persist ist bei Postgres bedeutungslos (autocommit → jeder Insert sofort
+        # dauerhaft); Parameter nur für Interface-Gleichheit mit InMemoryQdrant.
         with self.pool.connection() as conn:
             conn.execute(
                 """
                 INSERT INTO documents
-                  (doc_id, text, mandant_id, category, title, chinese_wall_exclude, doc_hash, embedding)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s::vector)
+                  (doc_id, text, mandant_id, category, title, doc_hash, embedding)
+                VALUES (%s, %s, %s, %s, %s, %s, %s::vector)
                 ON CONFLICT (doc_id) DO UPDATE SET
                   text = EXCLUDED.text, mandant_id = EXCLUDED.mandant_id,
                   category = EXCLUDED.category, title = EXCLUDED.title,
-                  chinese_wall_exclude = EXCLUDED.chinese_wall_exclude,
                   doc_hash = EXCLUDED.doc_hash, embedding = EXCLUDED.embedding
                 """,
                 (doc.doc_id, doc.text, doc.mandant_id, doc.category, doc.title,
-                 doc.chinese_wall_exclude, doc.doc_hash, _vec_literal(doc.embedding)),
+                 doc.doc_hash, _vec_literal(doc.embedding)),
             )
+
+    def flush(self) -> None:
+        """No-op: bei Postgres/autocommit ist jeder upsert bereits persistiert."""
 
     def search(
         self,
@@ -103,30 +103,29 @@ class PgVectorStore:
         Chinese-Wall) wird als SQL-WHERE VOR der Vektorsortierung angewendet —
         kein Post-Filter, gleiche Semantik wie InMemoryQdrant.
         """
-        allowed, excluded = _parse_filter(qdrant_filter)
+        allowed, forbidden = _parse_filter(qdrant_filter)
         qvec = _vec_literal(query_embedding)
         with self.pool.connection() as conn:
             rows = conn.execute(
                 """
-                SELECT doc_id, text, mandant_id, category, title,
-                       chinese_wall_exclude, doc_hash,
+                SELECT doc_id, text, mandant_id, category, title, doc_hash,
                        1 - (embedding <=> %s::vector) AS score
                 FROM documents
                 WHERE (mandant_id = ANY(%s::text[]) OR mandant_id IS NULL)
-                  AND NOT (%s::text[] && chinese_wall_exclude)
+                  AND (mandant_id IS NULL OR NOT (mandant_id = ANY(%s::text[])))
                 ORDER BY embedding <=> %s::vector
                 LIMIT %s
                 """,
-                (qvec, allowed, excluded, qvec, top_k),
+                (qvec, allowed, forbidden, qvec, top_k),
             ).fetchall()
 
         results: list[tuple[Document, float]] = []
         for r in rows:
             doc = Document(
                 doc_id=r[0], text=r[1], mandant_id=r[2], category=r[3], title=r[4],
-                chinese_wall_exclude=list(r[5]), doc_hash=r[6], embedding=[],
+                doc_hash=r[5], embedding=[],
             )
-            results.append((doc, float(r[7])))
+            results.append((doc, float(r[6])))
         return results
 
     def count(self) -> int:
