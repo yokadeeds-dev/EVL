@@ -16,8 +16,9 @@ Umgebungsvariablen:
 """
 
 import os
-import pytest
+
 import httpx
+import pytest
 
 BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
 USER_KEY = os.getenv("USER_KEY", "key-user-abc123")

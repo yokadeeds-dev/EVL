@@ -7,8 +7,6 @@ build_filter() ist der einzige Einstiegspunkt — mandatory, nicht optional.
 """
 
 from dataclasses import dataclass, field
-from typing import Optional
-
 
 # ── Nutzer-Kontext (kommt aus JWT in Production) ──────────────────────────────
 
@@ -91,8 +89,7 @@ def build_qdrant_filter(user: UserContext) -> dict:
         (user.user_id NOT IN chinese_wall_exclude)
     """
     effective = user.effective_allowed()
-    # None-mandant_id = öffentliche Dokumente (Leitfäden, Präzedenzfälle)
-    allowed_values = effective + [None]  # type: ignore
+    # None-mandant_id = öffentliche Dokumente (Leitfäden, Präzedenzfälle) → via is_null unten
 
     return {
         "should": [

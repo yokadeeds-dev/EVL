@@ -4,6 +4,7 @@ Simuliert alle Endpoints inklusive Auth, Rate-Limiting, PII-Check, Validierung.
 """
 
 import json
+import os
 import re
 import time
 from collections import defaultdict
@@ -152,7 +153,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(code, {"detail": msg}); return
             body = self._body() or {}
             p = body.get("path", "")
-            if "/nonexistent" in p or not p:
+            if not p or not os.path.exists(p):
                 self._send(404, {"detail": f"Pfad nicht gefunden: {p}"}); return
             self._send(200, {"status": "ok", "documents_ingested": 3})
 
