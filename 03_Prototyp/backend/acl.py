@@ -74,6 +74,21 @@ class UserContext:
     def can_see_mandant(self, mandant_id: str) -> bool:
         return mandant_id in self.effective_allowed()
 
+    def wall_forbidden_mandate(self) -> set[str]:
+        """
+        Mandate, die dieser User wegen einer Chinese Wall NICHT sehen darf –
+        weil er die Gegenseite in allowed_mandate hält. Query-Zeit-dynamisch:
+        kein pro-Dokument gespeicherter (und bei Rechte-Änderung veraltender)
+        Zustand mehr (früher: chinese_wall_exclude, beim Ingest eingefroren).
+        """
+        forbidden: set[str] = set()
+        for m_a, m_b in self.chinese_wall_pairs:
+            if m_a in self.allowed_mandate:
+                forbidden.add(m_b)
+            if m_b in self.allowed_mandate:
+                forbidden.add(m_a)
+        return forbidden
+
 
 # ── Simulierte User-Datenbank (in Production: aus AD/LDAP) ───────────────────
 
@@ -149,9 +164,10 @@ def build_qdrant_filter(user: UserContext) -> dict:
       Dokument ist sichtbar wenn:
         (mandant_id IN user.effective_allowed) OR (mandant_id IS None)
       AND
-        (user.user_id NOT IN chinese_wall_exclude)
+        (mandant_id NOT IN user.wall_forbidden_mandate)   # Chinese Wall, dynamisch
     """
     effective = user.effective_allowed()
+    forbidden = sorted(user.wall_forbidden_mandate())
     # None-mandant_id = öffentliche Dokumente (Leitfäden, Präzedenzfälle) → via is_null unten
 
     return {
@@ -160,28 +176,29 @@ def build_qdrant_filter(user: UserContext) -> dict:
             {"key": "mandant_id", "is_null": True},
         ],
         "must_not": [
-            {"key": "chinese_wall_exclude", "match": {"any": [user.user_id]}},
+            # Chinese Wall query-zeit-dynamisch: verbotene Mandate direkt statt
+            # einer beim Ingest eingefrorenen pro-Dokument-Ausschlussliste.
+            {"key": "mandant_id", "match": {"any": forbidden}},
         ],
         "_meta": {
             "user_id": user.user_id,
             "effective_mandate": effective,
-            "filter_version": "1.0",
+            "wall_forbidden": forbidden,
+            "filter_version": "2.0",
         }
     }
 
 
 def validate_result(doc_meta: dict, user: UserContext) -> tuple[bool, str]:
     """
-    Nachgelagerte Validierung: War das Ergebnis erlaubt?
-    Für Audit-Logging und Tests — zusätzliche Sicherheitsebene.
+    Nachgelagerte Validierung (Audit-Layer): War das Ergebnis erlaubt?
+    Prüft Chinese Wall + Mandanten-Sicht query-zeit-dynamisch.
     """
     mandant_id = doc_meta.get("mandant_id")
-    cw_exclude = doc_meta.get("chinese_wall_exclude", [])
-
-    if user.user_id in cw_exclude:
-        return False, f"Chinese Wall: {user.user_id} in exclude-Liste"
-
-    if mandant_id is not None and not user.can_see_mandant(mandant_id):
+    if mandant_id is None:
+        return True, "OK (öffentlich)"
+    if mandant_id in user.wall_forbidden_mandate():
+        return False, f"Chinese Wall: Mandat {mandant_id} für {user.user_id} gesperrt"
+    if not user.can_see_mandant(mandant_id):
         return False, f"ACL: Mandat {mandant_id} nicht in allowed_mandate"
-
     return True, "OK"
