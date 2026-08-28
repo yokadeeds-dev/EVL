@@ -1,0 +1,22 @@
+# EVL Backend — Ruff-Konfiguration
+#
+# Gate-Regeln (harter CI-Fehler): echte Defekte, nicht Stilfragen.
+#   E4/E7/E9  Import-/Statement-/Syntaxfehler
+#   F         pyflakes — undefined names, unused imports, ungenutzte Variablen
+#   I         Import-Sortierung
+#   UP        pyupgrade — veraltete Syntax modernisieren
+#
+# Bewusst NICHT im Gate (laufen im CI report-only, siehe .github/workflows/ci.yml):
+#   B008  Depends()/File()/Query() im Default-Argument ist FastAPI-Idiom, kein Bug
+#   Weitere Stil-/Meinungsregeln (SIM, ISC, BLE, ASYNC) — Baseline, schrittweise anziehbar
+target-version = "py311"
+line-length = 100
+
+[lint]
+select = ["E4", "E7", "E9", "F", "I", "UP"]
+ignore = [
+    "E402",  # module-import-not-at-top — bewusst: Router-Includes nach App-Definition (main.py)
+    "E701",  # multiple-statements-on-line-colon — kompakter Einzeiler-Stil des Codes
+    "E702",  # multiple-statements-on-line-semicolon — dito (z.B. `self._send(...); return`)
+    "E703",  # useless-semicolon
+]
