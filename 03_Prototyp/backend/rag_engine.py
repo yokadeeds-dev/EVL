@@ -170,6 +170,10 @@ class InMemoryQdrant:
     def count(self) -> int:
         return len(self._store)
 
+    def clear(self) -> None:
+        self._store.clear()
+        self._save()
+
 
 # ── Ingest-Pipeline ───────────────────────────────────────────────────────────
 

@@ -13,16 +13,16 @@ import redis_backend
 
 
 def _force_memory():
-    """Erzwingt den In-Memory-Pfad (kein Redis)."""
+    """Erzwingt den In-Memory-Pfad (kein Redis) — blockiert Reconnect-Versuche."""
     redis_backend._mem_store.clear()
-    redis_backend._connect_tried = True
     redis_backend._client = None
+    redis_backend._next_retry = float("inf")
 
 
 def _try_redis():
     """Setzt den Verbindungs-Cache zurueck und versucht eine echte Verbindung."""
-    redis_backend._connect_tried = False
     redis_backend._client = None
+    redis_backend._next_retry = 0.0
     return redis_backend.redis_available()
 
 
