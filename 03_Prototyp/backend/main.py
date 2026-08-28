@@ -51,10 +51,19 @@ rag: LegalRAGEngine | None = None
 llm_client: anthropic.Anthropic | None = None
 
 
+def _make_store():
+    """DATABASE_URL gesetzt → geteilter Postgres/pgvector-Store; sonst In-Memory-Fallback."""
+    dsn = os.getenv("DATABASE_URL", "").strip()
+    if dsn:
+        from pgvector_store import PgVectorStore
+        return PgVectorStore(dsn)
+    return InMemoryQdrant()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global store, rag, llm_client
-    store = InMemoryQdrant()
+    store = _make_store()
     rag = LegalRAGEngine(store)
     llm_client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
     yield
@@ -256,12 +265,9 @@ def kb_status(user: UserContext = Depends(require_admin)):
 @app.delete("/admin/kb-reset")
 def kb_reset(user: UserContext = Depends(require_admin)):
     """Wissensbasis vollständig leeren."""
-    global store, rag
     if store is None:
         raise HTTPException(status_code=503, detail="RAG-Pipeline nicht initialisiert.")
-    
-    store = InMemoryQdrant()
-    rag = LegalRAGEngine(store)
+    store.clear()
     return {"status": "ok", "message": "Wissensbasis geleert."}
 
 

@@ -7,10 +7,13 @@ services:
     restart: unless-stopped
     env_file: ./backend/.env
     environment:
-      # ueberschreibt REDIS_URL aus .env: Redis ist im Compose-Netz unter "redis" erreichbar
+      # ueberschreiben die .env-Werte: im Compose-Netz sind die Backends unter ihren Servicenamen erreichbar
       REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql://evl:evl@db:5432/evl
     depends_on:
       redis:
+        condition: service_healthy
+      db:
         condition: service_healthy
     volumes:
       # Wissensbasis und ChromaDB persistent auf dem Host
@@ -54,5 +57,23 @@ services:
       timeout: 3s
       retries: 5
 
+  db:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: evl
+      POSTGRES_PASSWORD: evl
+      POSTGRES_DB: evl
+    expose:
+      - "5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evl -d evl"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
 volumes:
   chroma_data:
+  pg_data:

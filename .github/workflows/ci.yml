@@ -35,6 +35,19 @@ jobs:
           --health-interval 10s
           --health-timeout 3s
           --health-retries 5
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: evl
+          POSTGRES_PASSWORD: evl
+          POSTGRES_DB: evl
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U evl -d evl"
+          --health-interval 10s
+          --health-timeout 3s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
 
@@ -44,19 +57,27 @@ jobs:
           cache: pip
           cache-dependency-path: 03_Prototyp/backend/requirements.txt
 
-      - name: Test-Tooling installieren (leichtgewichtig, ohne ML-Deps)
+      - name: Test-Tooling + App-Deps installieren (ohne sentence-transformers/torch)
         working-directory: 03_Prototyp/backend
-        run: pip install ruff pytest pytest-asyncio httpx redis
+        run: |
+          pip install ruff
+          # App-Deps fuer die echten main.py-Tests (test_api) und pgvector — aber
+          # ohne sentence-transformers/torch: die Tests nutzen use_real_model=False.
+          grep -v '^sentence-transformers' requirements.txt > /tmp/req-ci.txt
+          pip install -r /tmp/req-ci.txt
 
       - name: Lint (ruff — Gate)
         working-directory: 03_Prototyp/backend
         run: ruff check . --output-format=github
 
-      - name: E2E- & Redis-Tests
+      - name: Tests · E2E (Mock) · Redis · Postgres/pgvector · echte API
         working-directory: 03_Prototyp/backend
         env:
           BASE_URL: http://127.0.0.1:18000
           REDIS_URL: redis://localhost:6379/0
+          DATABASE_URL: postgresql://evl:evl@localhost:5432/evl
+          JWT_SECRET_KEY: test-secret-key-nur-fuer-ci-0123456789abcdef
+          ANTHROPIC_API_KEY: test-dummy-not-used
         run: |
           # mock_server.py ist ein reines-stdlib-Backend (keine Keys, kein LLM)
           # und teilt die Test-API-Keys mit test_e2e.py.
@@ -66,7 +87,9 @@ jobs:
             curl -sf "$BASE_URL/status" >/dev/null && break
             sleep 0.25
           done
-          pytest test_e2e.py test_redis_backend.py -v
+          # laeuft die gesamte Suite: E2E gegen Mock, Redis-, pgvector- und echte
+          # main.py-Tests (test_api gegen den Postgres-Service, LLM gemockt).
+          pytest -v
           kill "$MOCK_PID" 2>/dev/null || true
 
   # ── 2. Frontend · Production-Build (Vite) ──────────────────────────────────
