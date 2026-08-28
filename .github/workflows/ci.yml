@@ -159,7 +159,7 @@ jobs:
 
       - name: Trivy · Backend-Image scannen (report-only)
         if: env.PUSH == 'true'
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ghcr.io/${{ steps.ns.outputs.owner }}/evl-backend:${{ github.sha }}
           format: sarif
