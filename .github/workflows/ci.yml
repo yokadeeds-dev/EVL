@@ -25,6 +25,16 @@ jobs:
   backend:
     name: Backend · Lint & Test
     runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 3s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
 
@@ -36,16 +46,17 @@ jobs:
 
       - name: Test-Tooling installieren (leichtgewichtig, ohne ML-Deps)
         working-directory: 03_Prototyp/backend
-        run: pip install ruff pytest pytest-asyncio httpx
+        run: pip install ruff pytest pytest-asyncio httpx redis
 
       - name: Lint (ruff — Gate)
         working-directory: 03_Prototyp/backend
         run: ruff check . --output-format=github
 
-      - name: E2E-Tests gegen Mock-Backend
+      - name: E2E- & Redis-Tests
         working-directory: 03_Prototyp/backend
         env:
           BASE_URL: http://127.0.0.1:18000
+          REDIS_URL: redis://localhost:6379/0
         run: |
           # mock_server.py ist ein reines-stdlib-Backend (keine Keys, kein LLM)
           # und teilt die Test-API-Keys mit test_e2e.py.
@@ -55,7 +66,7 @@ jobs:
             curl -sf "$BASE_URL/status" >/dev/null && break
             sleep 0.25
           done
-          pytest test_e2e.py -v
+          pytest test_e2e.py test_redis_backend.py -v
           kill "$MOCK_PID" 2>/dev/null || true
 
   # ── 2. Frontend · Production-Build (Vite) ──────────────────────────────────
