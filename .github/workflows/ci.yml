@@ -109,6 +109,10 @@ jobs:
         working-directory: 03_Prototyp/frontend
         run: npm ci
 
+      - name: Typecheck (tsc — Gate)
+        working-directory: 03_Prototyp/frontend
+        run: npm run typecheck
+
       - name: Build
         working-directory: 03_Prototyp/frontend
         run: npm run build
