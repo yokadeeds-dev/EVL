@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
+import type { DocMeta, FlashMessage, FlashType, KBStatus } from '../types'
 
 const API_BASE = '/api'
 
-function StatusDot({ ok }) {
+function StatusDot({ ok }: { ok: boolean }) {
   return (
     <span
       className={`inline-block w-2 h-2 rounded-full mr-2 ${ok ? 'bg-green-500' : 'bg-red-400'}`}
@@ -10,9 +11,9 @@ function StatusDot({ ok }) {
   )
 }
 
-function DocRow({ doc, onDelete }) {
+function DocRow({ doc, onDelete }: { doc: DocMeta; onDelete: (name: string) => void }) {
   const [confirming, setConfirming] = useState(false)
-  const icons = { '.pdf': '📄', '.md': '📝', '.txt': '📃', '.docx': '📋' }
+  const icons: Record<string, string> = { '.pdf': '📄', '.md': '📝', '.txt': '📃', '.docx': '📋' }
 
   return (
     <div className="flex items-center justify-between py-2.5 border-b border-gray-100 last:border-0">
@@ -24,7 +25,10 @@ function DocRow({ doc, onDelete }) {
       {confirming ? (
         <div className="flex gap-2 shrink-0">
           <button
-            onClick={() => { onDelete(doc.name); setConfirming(false) }}
+            onClick={() => {
+              onDelete(doc.name)
+              setConfirming(false)
+            }}
             className="text-xs px-2 py-1 bg-red-50 text-red-600 border border-red-200 rounded hover:bg-red-100"
           >
             Löschen
@@ -48,20 +52,26 @@ function DocRow({ doc, onDelete }) {
   )
 }
 
-export default function AdminPanel({ adminKey, onLogout }) {
-  const [kbStatus, setKbStatus] = useState(null)
-  const [documents, setDocuments] = useState([])
+export default function AdminPanel({
+  adminKey,
+  onLogout,
+}: {
+  adminKey: string
+  onLogout: () => void
+}) {
+  const [kbStatus, setKbStatus] = useState<KBStatus | null>(null)
+  const [documents, setDocuments] = useState<DocMeta[]>([])
   const [uploading, setUploading] = useState(false)
   const [ingesting, setIngesting] = useState(false)
   const [resetting, setResetting] = useState(false)
   const [confirmReset, setConfirmReset] = useState(false)
-  const [message, setMessage] = useState(null)
-  const fileRef = useRef()
+  const [message, setMessage] = useState<FlashMessage | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
 
-  // Fix: JWT Bearer Token statt X-API-Key
-  const headers = { 'Authorization': `Bearer ${adminKey}` }
+  // JWT Bearer Token statt X-API-Key
+  const headers = { Authorization: `Bearer ${adminKey}` }
 
-  const flash = (text, type = 'ok') => {
+  const flash = (text: string, type: FlashType = 'ok') => {
     setMessage({ text, type })
     setTimeout(() => setMessage(null), 4000)
   }
@@ -69,8 +79,10 @@ export default function AdminPanel({ adminKey, onLogout }) {
   const loadStatus = async () => {
     try {
       const [s, d] = await Promise.all([
-        fetch(`${API_BASE}/admin/kb-status`, { headers }).then(r => r.json()),
-        fetch(`${API_BASE}/admin/documents`, { headers }).then(r => r.json()),
+        fetch(`${API_BASE}/admin/kb-status`, { headers }).then((r) => r.json() as Promise<KBStatus>),
+        fetch(`${API_BASE}/admin/documents`, { headers }).then(
+          (r) => r.json() as Promise<{ documents?: DocMeta[] }>,
+        ),
       ])
       setKbStatus(s)
       setDocuments(d.documents || [])
@@ -79,13 +91,17 @@ export default function AdminPanel({ adminKey, onLogout }) {
     }
   }
 
-  useEffect(() => { loadStatus() }, [])
+  useEffect(() => {
+    loadStatus()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
-  const handleUpload = async (e) => {
-    const files = Array.from(e.target.files)
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? [])
     if (!files.length) return
     setUploading(true)
-    let ok = 0, fail = 0
+    let ok = 0
+    let fail = 0
     for (const file of files) {
       const fd = new FormData()
       fd.append('file', file)
@@ -94,13 +110,11 @@ export default function AdminPanel({ adminKey, onLogout }) {
     }
     setUploading(false)
     flash(
-      fail === 0
-        ? `${ok} Datei(en) hochgeladen.`
-        : `${ok} OK, ${fail} fehlgeschlagen.`,
-      fail === 0 ? 'ok' : 'error'
+      fail === 0 ? `${ok} Datei(en) hochgeladen.` : `${ok} OK, ${fail} fehlgeschlagen.`,
+      fail === 0 ? 'ok' : 'error',
     )
     await loadStatus()
-    fileRef.current.value = ''
+    if (fileRef.current) fileRef.current.value = ''
   }
 
   const handleIngest = async () => {
@@ -111,16 +125,17 @@ export default function AdminPanel({ adminKey, onLogout }) {
       body: JSON.stringify({ path: './knowledge_base' }),
     })
     setIngesting(false)
-    const data = await r.json()
+    const data = (await r.json()) as { documents_ingested?: number; detail?: string }
     r.ok
       ? flash(`Eingelesen: ${data.documents_ingested} Dokument(e).`)
       : flash(data.detail || 'Fehler beim Einlesen.', 'error')
     await loadStatus()
   }
 
-  const handleDelete = async (filename) => {
+  const handleDelete = async (filename: string) => {
     await fetch(`${API_BASE}/admin/documents/${encodeURIComponent(filename)}`, {
-      method: 'DELETE', headers,
+      method: 'DELETE',
+      headers,
     })
     await loadStatus()
   }
@@ -136,7 +151,6 @@ export default function AdminPanel({ adminKey, onLogout }) {
 
   return (
     <div className="max-w-2xl mx-auto py-10 px-4">
-
       {/* Header */}
       <div className="mb-8">
         <div className="flex items-center justify-between mb-1">
@@ -164,23 +178,21 @@ export default function AdminPanel({ adminKey, onLogout }) {
                 {kbStatus.is_empty ? 'Wissensbasis leer' : 'Wissensbasis aktiv'}
               </div>
             </div>
-            <div className="text-sm text-gray-500">
-              {kbStatus.document_count} Chunks indexiert
-            </div>
-            <div className="text-sm text-gray-500">
-              {documents.length} Dateien
-            </div>
+            <div className="text-sm text-gray-500">{kbStatus.document_count} Chunks indexiert</div>
+            <div className="text-sm text-gray-500">{documents.length} Dateien</div>
           </div>
         </div>
       )}
 
       {/* Flash-Meldung */}
       {message && (
-        <div className={`mb-4 px-4 py-2.5 rounded-lg text-sm ${
-          message.type === 'error'
-            ? 'bg-red-50 text-red-700 border border-red-200'
-            : 'bg-green-50 text-green-700 border border-green-200'
-        }`}>
+        <div
+          className={`mb-4 px-4 py-2.5 rounded-lg text-sm ${
+            message.type === 'error'
+              ? 'bg-red-50 text-red-700 border border-red-200'
+              : 'bg-green-50 text-green-700 border border-green-200'
+          }`}
+        >
           {message.text}
         </div>
       )}
@@ -211,7 +223,7 @@ export default function AdminPanel({ adminKey, onLogout }) {
           <div className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-3">
             Dateien in Wissensbasis ({documents.length})
           </div>
-          {documents.map(doc => (
+          {documents.map((doc) => (
             <DocRow key={doc.name} doc={doc} onDelete={handleDelete} />
           ))}
         </div>
@@ -240,10 +252,16 @@ export default function AdminPanel({ adminKey, onLogout }) {
           <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
             Alle indizierten Daten werden gelöscht. Dateien bleiben erhalten.
             <div className="flex gap-2 mt-2">
-              <button onClick={handleReset} className="px-3 py-1 bg-red-600 text-white rounded text-xs hover:bg-red-700">
+              <button
+                onClick={handleReset}
+                className="px-3 py-1 bg-red-600 text-white rounded text-xs hover:bg-red-700"
+              >
                 Ja, leeren
               </button>
-              <button onClick={() => setConfirmReset(false)} className="px-3 py-1 border border-red-300 rounded text-xs hover:bg-red-100">
+              <button
+                onClick={() => setConfirmReset(false)}
+                className="px-3 py-1 border border-red-300 rounded text-xs hover:bg-red-100"
+              >
                 Abbruch
               </button>
             </div>
