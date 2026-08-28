@@ -19,3 +19,9 @@ knowledge_base/
 # OS
 .DS_Store
 Thumbs.db
+
+# Frontend-Build-Artefakte
+dist/
+
+# Lokale Editor-/Tooling-Configs
+.claude/
