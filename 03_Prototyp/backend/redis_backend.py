@@ -23,19 +23,26 @@ except ImportError:  # redis-Paket ist optional
 
 REDIS_URL = os.getenv("REDIS_URL", "").strip()
 CACHE_TTL = int(os.getenv("LLM_CACHE_TTL_SECONDS", "3600"))
+_RECONNECT_BACKOFF = 5.0  # Sekunden bis zum naechsten Verbindungsversuch
 
 _client = None
-_connect_tried = False
+_next_retry = 0.0
 
 
 def _get_client():
-    """Lazy, gecachter Redis-Client. None, wenn nicht konfiguriert/erreichbar."""
-    global _client, _connect_tried
-    if _connect_tried:
+    """
+    Lazy Redis-Client mit Reconnect. None, wenn nicht konfiguriert oder (noch)
+    nicht erreichbar. Ein fehlgeschlagener Verbindungsaufbau wird nach kurzem
+    Backoff erneut versucht — kein dauerhaftes Einfrieren im In-Memory-Fallback,
+    falls Redis erst nach dem App-Start bereit ist (Startup-Race).
+    """
+    global _client, _next_retry
+    if _client is not None:
         return _client
-    _connect_tried = True
     if not REDIS_URL or _redis_lib is None:
-        _client = None
+        return None
+    now = time.time()
+    if now < _next_retry:
         return None
     try:
         c = _redis_lib.from_url(
@@ -46,9 +53,16 @@ def _get_client():
         )
         c.ping()
         _client = c
+        return _client
     except Exception:
-        _client = None
-    return _client
+        _next_retry = now + _RECONNECT_BACKOFF
+        return None
+
+
+def _invalidate():
+    """Verbindung als tot markieren → der naechste _get_client() verbindet neu."""
+    global _client
+    _client = None
 
 
 def redis_available() -> bool:
@@ -59,26 +73,38 @@ def redis_available() -> bool:
 
 _mem_store: dict[str, list[float]] = defaultdict(list)
 
+# Atomarer Sliding-Window-Check server-seitig: verhindert die TOCTOU-Luecke
+# zwischen ZCARD-Pruefung und ZADD, die bei parallelen Workern zu leichter
+# Ueber-Zulassung fuehren wuerde.
+_RATE_LUA = """
+local now = tonumber(ARGV[1])
+local window = tonumber(ARGV[2])
+local limit = tonumber(ARGV[3])
+redis.call('ZREMRANGEBYSCORE', KEYS[1], 0, now - window)
+if redis.call('ZCARD', KEYS[1]) >= limit then
+  return 0
+end
+redis.call('ZADD', KEYS[1], now, ARGV[4])
+redis.call('EXPIRE', KEYS[1], window)
+return 1
+"""
+
 
 def check_rate_limit(key: str, limit: int, window: int) -> bool:
     """
-    True = Anfrage erlaubt, False = Limit erreicht.
-    Semantik identisch zum urspruenglichen In-Memory-Limiter: bis `limit`
-    Anfragen je `window` Sekunden sind erlaubt; geblockte zaehlen nicht mit.
+    True = Anfrage erlaubt, False = Limit erreicht. Sliding-Window.
+    Bis `limit` Anfragen je `window` Sekunden erlaubt; geblockte zaehlen nicht mit.
+    Der Redis-Pfad ist via Lua atomar (kein Check-and-Increment-Race).
     """
     now = time.time()
     client = _get_client()
     if client is not None:
         try:
-            rkey = f"ratelimit:{key}"
-            client.zremrangebyscore(rkey, 0, now - window)
-            if client.zcard(rkey) >= limit:
-                return False
-            client.zadd(rkey, {f"{now}:{uuid.uuid4().hex}": now})
-            client.expire(rkey, window)
-            return True
+            member = f"{now}:{uuid.uuid4().hex}"
+            allowed = client.eval(_RATE_LUA, 1, f"ratelimit:{key}", now, window, limit, member)
+            return bool(allowed)
         except Exception:
-            pass  # Verbindung mitten im Betrieb verloren → In-Memory-Fallback
+            _invalidate()  # Verbindung tot → Reconnect beim naechsten Call; jetzt Fallback
 
     calls = [t for t in _mem_store[key] if t > now - window]
     if len(calls) >= limit:
@@ -105,6 +131,7 @@ def cache_get(key: str) -> str | None:
     try:
         return client.get(key)
     except Exception:
+        _invalidate()
         return None
 
 
@@ -115,4 +142,4 @@ def cache_set(key: str, value: str, ttl: int = CACHE_TTL) -> None:
     try:
         client.set(key, value, ex=ttl)
     except Exception:
-        pass
+        _invalidate()
