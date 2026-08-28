@@ -49,8 +49,19 @@ def client():
         yield c
 
 
+# Demo-Passwörter (Defaults aus acl._DEMO_PASSWORDS)
+_PASSWORDS = {
+    "anwalt_a": "kraft-demo-2026",
+    "anwalt_b": "schuster-demo-2026",
+    "anwalt_c": "voss-demo-2026",
+}
+
+
 def _token(client, username: str) -> str:
-    r = client.post("/auth/token", data={"username": username, "password": "x"})
+    r = client.post(
+        "/auth/token",
+        data={"username": username, "password": _PASSWORDS[username]},
+    )
     assert r.status_code == 200, r.text
     return r.json()["access_token"]
 
@@ -67,6 +78,25 @@ def test_status_is_public(client):
 
 def test_templates_requires_auth(client):
     assert client.get("/templates").status_code == 401
+
+
+def test_login_rejects_wrong_password(client):
+    # Regression: Login MUSS das Passwort prüfen (Auth-Bypass-Fix).
+    r = client.post("/auth/token", data={"username": "anwalt_a", "password": "falsch"})
+    assert r.status_code == 401, r.text
+
+
+def test_login_rejects_unknown_user(client):
+    r = client.post("/auth/token", data={"username": "hacker", "password": "x"})
+    assert r.status_code == 401, r.text
+
+
+def test_login_accepts_correct_password(client):
+    r = client.post(
+        "/auth/token", data={"username": "anwalt_a", "password": "kraft-demo-2026"}
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["access_token"]
 
 
 def test_list_documents_requires_admin(client):

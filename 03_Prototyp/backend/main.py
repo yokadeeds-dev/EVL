@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 import jwt_auth
 import redis_backend
 import synthetic_docs
-from acl import USERS, UserContext
+from acl import UserContext, authenticate
 from auth import require_admin, require_user
 from prompts import TEMPLATES
 from rag_engine import InMemoryQdrant, LegalRAGEngine
@@ -142,12 +142,17 @@ def list_templates(user: UserContext = Depends(require_user)):
 
 @app.post("/auth/token")
 def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
-    """OAuth2 Login. Akzeptiert anwalt_a, anwalt_b, anwalt_c."""
-    user_id = form_data.username
-    if user_id not in USERS:
-        raise HTTPException(status_code=400, detail="Falscher Benutzername. Test-User: anwalt_a, anwalt_b, anwalt_c")
-    
-    jwt_token = jwt_auth.create_jwt({"sub": user_id})
+    """OAuth2 Login. Prüft Benutzername UND Passwort (pbkdf2-Hash in acl.USERS)."""
+    user = authenticate(form_data.username, form_data.password)
+    if user is None:
+        # Bewusst generisch: keine Auskunft, ob User oder Passwort falsch war.
+        raise HTTPException(
+            status_code=401,
+            detail="Benutzername oder Passwort falsch.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    jwt_token = jwt_auth.create_jwt({"sub": user.user_id})
     return {"access_token": jwt_token, "token_type": "bearer"}
 
 
