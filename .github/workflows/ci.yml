@@ -4,8 +4,8 @@ name: CI/CD
 #   backend  — FastAPI + RAG (Python 3.11)
 #   frontend — React + Vite (Node 20)
 #
-# Gates bei jedem Pull Request: Lint, Tests, Frontend-Build, CodeQL, Image-Build.
-# Push nach GHCR + Deploy-Gate nur auf main.
+# Gates bei jedem Pull Request: Lint, Tests, Frontend-Build (+tsc), CodeQL,
+# Image-Build, Trivy (CRITICAL). Push nach GHCR + Deploy-Gate nur auf main.
 
 on:
   push:
@@ -173,18 +173,33 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Backend-Image bauen (Push nur auf main)
+      - name: Backend-Image bauen (lokal laden für den Scan)
         uses: docker/build-push-action@v6
         with:
           context: 03_Prototyp/backend
-          push: ${{ env.PUSH }}
+          load: true
           tags: |
             ghcr.io/${{ steps.ns.outputs.owner }}/evl-backend:latest
             ghcr.io/${{ steps.ns.outputs.owner }}/evl-backend:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Frontend-Image bauen (Push nur auf main)
+      - name: Trivy · Backend-Image (CRITICAL = echtes Gate, auch im PR)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ghcr.io/${{ steps.ns.outputs.owner }}/evl-backend:${{ github.sha }}
+          format: table
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Backend-Image nach GHCR pushen (nur auf main)
+        if: env.PUSH == 'true'
+        run: |
+          docker push "ghcr.io/${{ steps.ns.outputs.owner }}/evl-backend:latest"
+          docker push "ghcr.io/${{ steps.ns.outputs.owner }}/evl-backend:${{ github.sha }}"
+
+      - name: Frontend-Image bauen & pushen (Push nur auf main)
         uses: docker/build-push-action@v6
         with:
           context: 03_Prototyp/frontend
@@ -194,23 +209,6 @@ jobs:
             ghcr.io/${{ steps.ns.outputs.owner }}/evl-frontend:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      - name: Trivy · Backend-Image scannen (report-only)
-        if: env.PUSH == 'true'
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: ghcr.io/${{ steps.ns.outputs.owner }}/evl-backend:${{ github.sha }}
-          format: sarif
-          output: trivy-backend.sarif
-          severity: CRITICAL,HIGH
-          exit-code: "0"
-
-      - name: Trivy-Ergebnis in den Security-Tab
-        if: env.PUSH == 'true'
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: trivy-backend.sarif
-          category: trivy-backend
 
   # ── 5. Deploy · Production (Approval-Gate, Gerüst) ─────────────────────────
   #   Läuft nur auf main. Das Environment "production" kann im Repo mit

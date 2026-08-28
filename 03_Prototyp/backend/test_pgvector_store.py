@@ -25,11 +25,10 @@ def _store():
         pytest.skip(f"Postgres/pgvector nicht erreichbar: {exc}")
 
 
-def _doc(doc_id: str, text: str, mandant_id, cw_exclude: list[str]) -> Document:
+def _doc(doc_id: str, text: str, mandant_id) -> Document:
     return Document(
         doc_id=doc_id, text=text, mandant_id=mandant_id, category="test",
-        title=doc_id, chinese_wall_exclude=cw_exclude, doc_hash=doc_id,
-        embedding=_simple_embed(text),
+        title=doc_id, doc_hash=doc_id, embedding=_simple_embed(text),
     )
 
 
@@ -37,15 +36,15 @@ class TestPgVectorStore:
     def test_count_and_mandant_isolation(self):
         store = _store()
         p = uuid.uuid4().hex[:8]
-        d1 = _doc(f"{p}-1", "vertrag mandant eins", "M001", ["anwalt_b", "anwalt_c"])
-        d2 = _doc(f"{p}-2", "vertrag mandant zwei", "M002", ["anwalt_a", "anwalt_c"])
-        d3 = _doc(f"{p}-3", "oeffentlicher leitfaden", None, [])
+        d1 = _doc(f"{p}-1", "vertrag mandant eins", "M001")
+        d2 = _doc(f"{p}-2", "vertrag mandant zwei", "M002")
+        d3 = _doc(f"{p}-3", "oeffentlicher leitfaden", None)
         before = store.count()
         for d in (d1, d2, d3):
             store.upsert(d)
         assert store.count() == before + 3
 
-        # anwalt_a (effektiv M001,M003): sieht M001 + oeffentlich, nicht M002
+        # anwalt_a (effektiv M001,M003; Wall verbietet M002): sieht M001 + oeffentlich
         seen_a = {
             d.doc_id
             for d, _ in store.search(_simple_embed("vertrag"), build_qdrant_filter(USERS["anwalt_a"]), top_k=50)
@@ -54,7 +53,7 @@ class TestPgVectorStore:
         assert f"{p}-3" in seen_a
         assert f"{p}-2" not in seen_a
 
-        # anwalt_b (effektiv M002,M003): sieht M002 + oeffentlich, nicht M001
+        # anwalt_b (effektiv M002,M003; Wall verbietet M001): sieht M002 + oeffentlich
         seen_b = {
             d.doc_id
             for d, _ in store.search(_simple_embed("vertrag"), build_qdrant_filter(USERS["anwalt_b"]), top_k=50)
@@ -66,7 +65,7 @@ class TestPgVectorStore:
     def test_upsert_is_idempotent(self):
         store = _store()
         p = uuid.uuid4().hex[:8]
-        d = _doc(f"{p}-x", "irgendein text", "M001", [])
+        d = _doc(f"{p}-x", "irgendein text", "M001")
         before = store.count()
         store.upsert(d)
         store.upsert(d)
@@ -84,7 +83,7 @@ class TestPgVectorStore:
         store = _store()
         p = uuid.uuid4().hex[:8]
         for i in range(30):
-            store.upsert(_doc(f"{p}-{i}", f"vertrag nummer {i}", "M001", []))
+            store.upsert(_doc(f"{p}-{i}", f"vertrag nummer {i}", "M001"))
 
         qvec = _vec_literal(_simple_embed("vertrag"))
         with store.pool.connection() as conn:

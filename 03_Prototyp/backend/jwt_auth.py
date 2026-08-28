@@ -1,49 +1,46 @@
-import base64
-import hashlib
-import hmac
-import json
+"""
+JWT-Handling via PyJWT (etablierte Bibliothek statt Eigenbau).
+
+HS256 mit vollständigen Standard-Claims (iss/aud/iat/nbf/exp). Der Algorithmus
+wird bei der Verifikation fest auf HS256 gepinnt → kein alg=none / alg-Confusion.
+Revocation/Refresh sind bewusst Prototyp-Scope (siehe ADR 0003).
+"""
+
+import datetime
 import os
-import time
+
+import jwt
 
 SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "")
 if not SECRET_KEY:
     raise RuntimeError("JWT_SECRET_KEY ist nicht gesetzt! Bitte in .env eintragen.")
 
-def _b64enc(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).decode('utf-8').rstrip('=')
+_ALGORITHM = "HS256"
+_ISSUER = "evl-content-assistant"
+_AUDIENCE = "evl-api"
+_DEFAULT_TTL = 3600  # Sekunden
 
-def _b64dec(data: str) -> bytes:
-    pad = b'=' * (4 - (len(data) % 4))
-    return base64.urlsafe_b64decode(data.encode('utf-8') + pad)
 
-def create_jwt(payload: dict, expires_in: int = 3600) -> str:
-    header = {"alg": "HS256", "typ": "JWT"}
-    payload = payload.copy()
-    payload["exp"] = int(time.time()) + expires_in
-    
-    header_b64 = _b64enc(json.dumps(header).encode('utf-8'))
-    payload_b64 = _b64enc(json.dumps(payload).encode('utf-8'))
-    
-    msg = f"{header_b64}.{payload_b64}"
-    sig = hmac.new(SECRET_KEY.encode(), msg.encode(), hashlib.sha256).digest()
-    sig_b64 = _b64enc(sig)
-    
-    return f"{msg}.{sig_b64}"
+def create_jwt(payload: dict, expires_in: int = _DEFAULT_TTL) -> str:
+    now = datetime.datetime.now(datetime.UTC)
+    claims = {
+        **payload,
+        "iss": _ISSUER,
+        "aud": _AUDIENCE,
+        "iat": now,
+        "nbf": now,
+        "exp": now + datetime.timedelta(seconds=expires_in),
+    }
+    return jwt.encode(claims, SECRET_KEY, algorithm=_ALGORITHM)
+
 
 def verify_jwt(token: str) -> dict:
-    parts = token.split(".")
-    if len(parts) != 3:
-        raise ValueError("Invalid JWT format")
-    
-    msg = f"{parts[0]}.{parts[1]}"
-    sig = _b64dec(parts[2])
-    
-    expected_sig = hmac.new(SECRET_KEY.encode(), msg.encode(), hashlib.sha256).digest()
-    if not hmac.compare_digest(sig, expected_sig):
-        raise ValueError("Invalid signature")
-        
-    payload = json.loads(_b64dec(parts[1]).decode('utf-8'))
-    if payload.get("exp", 0) < time.time():
-        raise ValueError("Token expired")
-        
-    return payload
+    """Dekodiert + validiert (Signatur, exp, nbf, iss, aud). Wirft bei Ungültigkeit."""
+    return jwt.decode(
+        token,
+        SECRET_KEY,
+        algorithms=[_ALGORITHM],
+        issuer=_ISSUER,
+        audience=_AUDIENCE,
+        options={"require": ["exp", "iat", "nbf", "iss", "aud", "sub"]},
+    )
