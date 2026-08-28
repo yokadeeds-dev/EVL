@@ -3,16 +3,13 @@ Stresstest gegen Mock-Backend — nur Python stdlib.
 Startet den Mock-Server, führt alle Test-Suites aus, gibt Report aus.
 """
 
-import asyncio
 import json
-import re
 import statistics
 import sys
-import time
 import threading
-import urllib.request
+import time
 import urllib.error
-from collections import defaultdict
+import urllib.request
 from dataclasses import dataclass, field
 
 from mock_server import run as run_mock

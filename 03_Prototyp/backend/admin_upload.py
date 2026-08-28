@@ -4,14 +4,12 @@ Wird in main.py eingebunden via: from admin_upload import router as upload_route
 """
 
 import os
-import shutil
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from fastapi.responses import JSONResponse
 
-from auth import require_admin
 from acl import UserContext
+from auth import require_admin, require_user
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 

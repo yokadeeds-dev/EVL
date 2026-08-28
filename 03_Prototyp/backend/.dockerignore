@@ -1,0 +1,19 @@
+# Secrets & lokale Zustände nie ins Image
+.env
+.env.*
+!.env.example
+
+# Python-Artefakte
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Laufzeit-Daten (kommen via Volume, nicht ins Image)
+chroma_db/
+knowledge_base/
+
+# Doku / Tests werden fürs Runtime-Image nicht gebraucht
+*.md

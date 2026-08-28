@@ -16,17 +16,18 @@ from contextlib import asynccontextmanager
 
 import anthropic
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field
 
-from auth import require_user, require_admin
-from prompts import TEMPLATES
-from acl import UserContext, USERS
-from rag_engine import InMemoryQdrant, LegalRAGEngine, ingest_documents as engine_ingest_documents
-import synthetic_docs
 import jwt_auth
-from fastapi.security import OAuth2PasswordRequestForm
+import synthetic_docs
+from acl import USERS, UserContext
+from auth import require_admin, require_user
+from prompts import TEMPLATES
+from rag_engine import InMemoryQdrant, LegalRAGEngine
+from rag_engine import ingest_documents as engine_ingest_documents
 
 load_dotenv()
 
@@ -285,4 +286,5 @@ def _check_for_pii(text: str) -> None:
 
 # ── Admin-Upload-Router einbinden ─────────────────────────────────────────────
 from admin_upload import router as upload_router
+
 app.include_router(upload_router)

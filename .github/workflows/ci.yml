@@ -1,0 +1,195 @@
+name: CI/CD
+
+# Build · Test · Scan · Deploy für den EVL-Prototyp (03_Prototyp/)
+#   backend  — FastAPI + RAG (Python 3.11)
+#   frontend — React + Vite (Node 20)
+#
+# Gates bei jedem Pull Request: Lint, Tests, Frontend-Build, CodeQL, Image-Build.
+# Push nach GHCR + Deploy-Gate nur auf main.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # ── 1. Backend · Lint (ruff) + E2E-Tests gegen key-freies Mock-Backend ──────
+  backend:
+    name: Backend · Lint & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: 03_Prototyp/backend/requirements.txt
+
+      - name: Test-Tooling installieren (leichtgewichtig, ohne ML-Deps)
+        working-directory: 03_Prototyp/backend
+        run: pip install ruff pytest pytest-asyncio httpx
+
+      - name: Lint (ruff — Gate)
+        working-directory: 03_Prototyp/backend
+        run: ruff check . --output-format=github
+
+      - name: E2E-Tests gegen Mock-Backend
+        working-directory: 03_Prototyp/backend
+        env:
+          BASE_URL: http://127.0.0.1:18000
+        run: |
+          # mock_server.py ist ein reines-stdlib-Backend (keine Keys, kein LLM)
+          # und teilt die Test-API-Keys mit test_e2e.py.
+          python -c "from mock_server import run; run().serve_forever()" &
+          MOCK_PID=$!
+          for i in $(seq 1 40); do
+            curl -sf "$BASE_URL/status" >/dev/null && break
+            sleep 0.25
+          done
+          pytest test_e2e.py -v
+          kill "$MOCK_PID" 2>/dev/null || true
+
+  # ── 2. Frontend · Production-Build (Vite) ──────────────────────────────────
+  frontend:
+    name: Frontend · Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: 03_Prototyp/frontend/package-lock.json
+
+      - name: Install
+        working-directory: 03_Prototyp/frontend
+        run: npm ci
+
+      - name: Build
+        working-directory: 03_Prototyp/frontend
+        run: npm run build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: 03_Prototyp/frontend/dist
+          if-no-files-found: error
+
+  # ── 3. Scan · CodeQL (SAST) für Python + JavaScript ────────────────────────
+  codeql:
+    name: Scan · CodeQL
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, javascript]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
+
+  # ── 4. Build & Push · Container-Images (+ Trivy-Scan) ──────────────────────
+  #   Build läuft bei jedem PR (verifiziert das reproduzierbare Packaging);
+  #   Push nach GHCR nur auf main / manuellem Dispatch.
+  docker:
+    name: Build & Push Images
+    needs: [backend, frontend, codeql]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+    env:
+      PUSH: ${{ github.event_name != 'pull_request' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Registry-Namespace (lowercase)
+        id: ns
+        run: echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: GHCR Login
+        if: env.PUSH == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Backend-Image bauen (Push nur auf main)
+        uses: docker/build-push-action@v6
+        with:
+          context: 03_Prototyp/backend
+          push: ${{ env.PUSH }}
+          tags: |
+            ghcr.io/${{ steps.ns.outputs.owner }}/evl-backend:latest
+            ghcr.io/${{ steps.ns.outputs.owner }}/evl-backend:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Frontend-Image bauen (Push nur auf main)
+        uses: docker/build-push-action@v6
+        with:
+          context: 03_Prototyp/frontend
+          push: ${{ env.PUSH }}
+          tags: |
+            ghcr.io/${{ steps.ns.outputs.owner }}/evl-frontend:latest
+            ghcr.io/${{ steps.ns.outputs.owner }}/evl-frontend:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Trivy · Backend-Image scannen (report-only)
+        if: env.PUSH == 'true'
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ghcr.io/${{ steps.ns.outputs.owner }}/evl-backend:${{ github.sha }}
+          format: sarif
+          output: trivy-backend.sarif
+          severity: CRITICAL,HIGH
+          exit-code: "0"
+
+      - name: Trivy-Ergebnis in den Security-Tab
+        if: env.PUSH == 'true'
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-backend.sarif
+          category: trivy-backend
+
+  # ── 5. Deploy · Production (Approval-Gate, Gerüst) ─────────────────────────
+  #   Läuft nur auf main. Das Environment "production" kann im Repo mit
+  #   "Required reviewers" versehen werden → manuelles Freigabe-Gate vor Prod.
+  deploy:
+    name: Deploy · Production
+    needs: docker
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Deploy-Schritt (Ziel hier einhängen)
+        run: |
+          echo "Images liegen in GHCR bereit:"
+          echo "  ghcr.io/<owner>/evl-backend:${GITHUB_SHA}"
+          echo "  ghcr.io/<owner>/evl-frontend:${GITHUB_SHA}"
+          echo ""
+          echo "TODO: Deploy-Target anbinden, z. B. auf dem Zielserver:"
+          echo "  docker compose pull && docker compose up -d"
+          echo "oder K8s: kubectl set image / rollout."
