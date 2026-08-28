@@ -7,19 +7,17 @@ Für Production: QdrantClient durch echten Client ersetzen —
 die ACL-Logik bleibt identisch.
 """
 
+import dataclasses
 import hashlib
 import json
 import math
+import os
 import re
 import time
-import os
-import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 from acl import UserContext, build_qdrant_filter, validate_result
-
 
 # ── Datenstrukturen ───────────────────────────────────────────────────────────
 
@@ -27,7 +25,7 @@ from acl import UserContext, build_qdrant_filter, validate_result
 class Document:
     doc_id:              str
     text:                str
-    mandant_id:          Optional[str]
+    mandant_id:          str | None
     category:            str
     title:               str
     chinese_wall_exclude: list[str]
@@ -41,7 +39,7 @@ class QueryResult:
     title:     str
     score:     float
     excerpt:   str
-    mandant_id: Optional[str]
+    mandant_id: str | None
     category:  str
     acl_valid: bool
     acl_reason: str
@@ -106,7 +104,7 @@ class InMemoryQdrant:
 
     def _load(self):
         if os.path.exists(self.persist_path):
-            with open(self.persist_path, "r", encoding="utf-8") as f:
+            with open(self.persist_path, encoding="utf-8") as f:
                 data = json.load(f)
             for k, v in data.items():
                 self._store[k] = Document(**v)
@@ -177,7 +175,7 @@ class InMemoryQdrant:
 
 CHINESE_WALL_PAIRS = [("M001", "M002")]
 
-def _compute_chinese_wall_exclude(mandant_id: Optional[str]) -> list[str]:
+def _compute_chinese_wall_exclude(mandant_id: str | None) -> list[str]:
     """
     Welche User-IDs sollen dieses Dokument NICHT sehen wegen Chinese Wall?
     """

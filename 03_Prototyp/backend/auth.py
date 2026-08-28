@@ -9,8 +9,9 @@ Setup:
 
 from fastapi import Depends, HTTPException, Security, status
 from fastapi.security import OAuth2PasswordBearer
+
 import jwt_auth
-from acl import get_user, UserContext
+from acl import UserContext, get_user
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token")
 

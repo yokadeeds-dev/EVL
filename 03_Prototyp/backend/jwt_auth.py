@@ -1,9 +1,9 @@
-import hmac
+import base64
 import hashlib
+import hmac
 import json
 import os
 import time
-import base64
 
 SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "")
 if not SECRET_KEY:
