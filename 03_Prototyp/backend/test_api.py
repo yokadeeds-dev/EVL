@@ -141,3 +141,27 @@ def test_ingest_generates_sandbox_docs_when_metadata_missing(client, tmp_path):
     assert r.status_code == 200, r.text
     assert r.json()["documents_ingested"] > 0
     client.delete("/admin/kb-reset", headers=admin)
+
+
+def test_generation_skips_thinking_blocks():
+    # Regression: content[0].text brach bei Modellen, die einen thinking-Block voranstellen.
+    import generation
+
+    class Block:
+        def __init__(self, type_, text=None):
+            self.type, self.text = type_, text
+
+    class Msg:
+        content = [Block("thinking"), Block("text", "Antwort")]
+        usage = None
+        stop_reason = "end_turn"
+        model = "claude-opus-5-5"
+
+    class Client:
+        class messages:  # noqa: N801
+            @staticmethod
+            def create(**kwargs):
+                return Msg()
+
+    gen = generation.generate(Client(), generation.Retrieval([], []), "faq", "Test", use_cache=False)
+    assert gen.result == "Antwort" and gen.served_model == "claude-opus-5-5"
