@@ -132,6 +132,11 @@ class PgVectorStore:
         with self.pool.connection() as conn:
             return conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
 
+    def existing_hashes(self) -> set[str]:
+        """Hashes aller gespeicherten Dokumente — der Ingest überspringt damit Duplikate."""
+        with self.pool.connection() as conn:
+            return {r[0] for r in conn.execute("SELECT doc_hash FROM documents").fetchall()}
+
     def clear(self) -> None:
         with self.pool.connection() as conn:
             conn.execute("TRUNCATE documents")

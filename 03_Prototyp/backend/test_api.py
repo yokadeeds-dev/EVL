@@ -131,3 +131,48 @@ def test_generate_happy_path_with_mocked_llm(client, monkeypatch):
     )
     assert r.status_code == 200, r.text
     assert r.json()["result"] == "GENERIERTER-TEXT"
+
+
+def test_ingest_generates_sandbox_docs_when_metadata_missing(client, tmp_path):
+    # Regression: /admin/ingest rief synthetic_docs.generate_synthetic_docs (existiert nicht)
+    # → AttributeError/500, sobald kein metadata.json im Zielordner lag.
+    admin = _auth(_token(client, "anwalt_a"))
+    r = client.post("/admin/ingest", headers=admin, json={"path": str(tmp_path / "kb")})
+    assert r.status_code == 200, r.text
+    assert r.json()["documents_ingested"] > 0
+    client.delete("/admin/kb-reset", headers=admin)
+
+
+def test_generation_skips_thinking_blocks():
+    # Regression: content[0].text brach bei Modellen, die einen thinking-Block voranstellen.
+    import generation
+
+    class Block:
+        def __init__(self, type_, text=None):
+            self.type, self.text = type_, text
+
+    class Msg:
+        content = [Block("thinking"), Block("text", "Antwort")]
+        usage = None
+        stop_reason = "end_turn"
+        model = "claude-opus-5-5"
+
+    class Client:
+        class messages:  # noqa: N801
+            @staticmethod
+            def create(**kwargs):
+                return Msg()
+
+    gen = generation.generate(Client(), generation.Retrieval([], []), "faq", "Test", use_cache=False)
+    assert gen.result == "Antwort" and gen.served_model == "claude-opus-5-5"
+
+
+def test_ingest_only_uses_public_store_interface():
+    # Regression: ingest_documents darf keine Interna eines konkreten Stores nutzen
+    # (store._store gibt es nur im In-Memory-Store; mit pgvector -> AttributeError).
+    import inspect
+
+    import rag_engine
+
+    code = "\n".join(line.split("#", 1)[0] for line in inspect.getsource(rag_engine.ingest_documents).splitlines())
+    assert "._store" not in code

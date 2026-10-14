@@ -10,23 +10,28 @@ Starten:
 
 import os
 import re
+import time
 from contextlib import asynccontextmanager
 
 import anthropic
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field
 
+import generation
 import jwt_auth
 import redis_backend
 import synthetic_docs
+import telemetry
 from acl import UserContext, authenticate
 from auth import require_admin, require_user
 from prompts import TEMPLATES
 from rag_engine import InMemoryQdrant, LegalRAGEngine
 from rag_engine import ingest_documents as engine_ingest_documents
+from telemetry import RequestEvent
 
 load_dotenv()
 
@@ -171,67 +176,57 @@ def get_me(user: UserContext = Depends(require_user)):
 @app.post("/generate", response_model=GenerateResponse)
 def generate_text(req: GenerateRequest, user: UserContext = Depends(require_user)):
     """RAG-Retrieval + LLM-Generierung (ACL-geschützt)."""
-    # Rate-Limit pro User-Identität (nicht pro API-Key-String).
-    _check_rate_limit(user.user_id)
-
-    if llm_client is None:
-        raise HTTPException(status_code=503, detail="LLM-Client nicht initialisiert.")
-
-    template = TEMPLATES[req.text_type]
-
-    # PII-Check auf dem User-Input VOR teurer RAG-/LLM-Arbeit (F6: früh ablehnen).
-    _check_for_pii(req.topic)
-
-    # RAG
-    context = ""
-    chunks_used = 0
-    rag_active = False
-    if req.use_rag and rag and store and store.count() > 0:
-        if req.target_mandant and req.target_mandant in user.effective_allowed():
-            from dataclasses import replace
-            effective_user = replace(user, allowed_mandate=[req.target_mandant])
-        else:
-            effective_user = user
-            
-        query_results = rag.query(effective_user, req.topic, top_k=5)
-        valid_excerpts = [r.excerpt for r in query_results if r.acl_valid]
-        context = "\n\n---\n\n".join(valid_excerpts)
-        chunks_used = len(valid_excerpts)
-        rag_active = bool(chunks_used > 0)
-
-    if not context:
-        context = (
-            "Kein spezifisches Firmenwissen verfügbar. "
-            "Allgemeines Branchenwissen verwenden und darauf hinweisen, "
-            "dass der Text mit unternehmensspezifischen Informationen ergänzt werden sollte."
-        )
-
-    user_prompt = template["user_template"].format(context=context, topic=req.topic)
-
-    model = os.getenv("LLM_MODEL", "claude-opus-4-5")
-    # Cache-Key ueber alle preisbestimmenden Eingaben (Modell, System, Prompt inkl.
-    # ACL-gefiltertem RAG-Kontext) → nur identischer Input teilt einen Eintrag.
-    ck = redis_backend.cache_key(model, template["system"], user_prompt)
-    result_text = redis_backend.cache_get(ck)
-    if result_text is None:
+    t0 = time.perf_counter()
+    event = RequestEvent(status="error", text_type=req.text_type, user_id=user.user_id,
+                         model=generation.model_name())
+    try:
+        # Rate-Limit pro User-Identität (nicht pro API-Key-String).
         try:
-            message = llm_client.messages.create(
-                model=model,
-                max_tokens=1024,
-                system=template["system"],
-                messages=[{"role": "user", "content": user_prompt}],
-            )
+            _check_rate_limit(user.user_id)
+        except HTTPException:
+            event.status = "rate_limited"
+            raise
+
+        if llm_client is None:
+            raise HTTPException(status_code=503, detail="LLM-Client nicht initialisiert.")
+
+        # PII-Check auf dem User-Input VOR teurer RAG-/LLM-Arbeit (F6: früh ablehnen).
+        try:
+            _check_for_pii(req.topic)
+        except HTTPException:
+            event.status = "pii_rejected"
+            raise
+
+        if req.use_rag:
+            retrieval = generation.retrieve(rag, store.count() if store else 0, user, req.topic,
+                                            req.target_mandant, top_k=5)
+        else:
+            retrieval = generation.Retrieval([], [])
+        event.retrieval_ms = round(retrieval.latency_ms, 1)
+        event.context_chunks = len(retrieval.contexts)
+
+        try:
+            gen = generation.generate(llm_client, retrieval, req.text_type, req.topic)
         except anthropic.APIStatusError as e:
+            event.status = "llm_error"
             raise HTTPException(status_code=502, detail=f"LLM-API Fehler: {e.message}")
-        result_text = message.content[0].text
-        redis_backend.cache_set(ck, result_text)
+
+        event.status = "ok"
+        event.model = gen.served_model or gen.model
+        event.llm_ms = round(gen.llm_latency_ms, 1)
+        event.input_tokens, event.output_tokens = gen.input_tokens, gen.output_tokens
+        event.cost_usd = telemetry.cost_usd(gen.model, gen.input_tokens, gen.output_tokens)
+        event.cache_hit = gen.cache_hit
+    finally:
+        event.total_ms = round((time.perf_counter() - t0) * 1000, 1)
+        telemetry.telemetry.record(event)
 
     return GenerateResponse(
-        result=result_text,
+        result=gen.result,
         text_type=req.text_type,
-        label=template["label"],
-        context_chunks_used=chunks_used,
-        rag_active=rag_active,
+        label=gen.label,
+        context_chunks_used=gen.chunks_used,
+        rag_active=gen.chunks_used > 0,
     )
 
 
@@ -250,12 +245,21 @@ def ingest_documents(req: IngestRequest, user: UserContext = Depends(require_adm
         
         # Generiere Sandbox Docs mit Mandant-Metadaten falls abwesend
         if not os.path.exists(meta_path):
-            synthetic_docs.generate_synthetic_docs(num_docs=100, out_dir=req.path)
+            synthetic_docs.generate_docs(output_dir=req.path)
             
         stats = engine_ingest_documents(meta_path, req.path, store, verbose=True)
         return {"status": "ok", "documents_ingested": stats["ingested"]}
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.get("/admin/metrics")
+def metrics(format: str = "json", user: UserContext = Depends(require_admin)):
+    """Latenz, Tokens, Kosten, Cache-Trefferquote und SLO-Status (dieser Worker).
+    format=prometheus liefert das Prometheus-Text-Format."""
+    if format == "prometheus":
+        return PlainTextResponse(telemetry.telemetry.prometheus())
+    return telemetry.telemetry.snapshot()
 
 
 @app.get("/admin/kb-status", response_model=KBStatusResponse)
@@ -280,7 +284,9 @@ def kb_reset(user: UserContext = Depends(require_admin)):
 
 PII_PATTERNS = [
     (r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b", "E-Mail-Adresse"),
-    (r"\b(\+49|0)[0-9\s\-/]{7,}\b", "Telefonnummer"),
+    # Kein \b vor "+": nach einem Leerzeichen gibt es dort keine Wortgrenze, "+49 170 …"
+    # rutschte durch (gefunden per eval/redteam). Lookbehind statt Wortgrenze.
+    (r"(?<![\w+])(?:\+49|0049|0)[\s\-/]?\d[\d\s\-/]{6,}\d", "Telefonnummer"),
     (r"\b[A-Z]{2}\d{2}[A-Z0-9]{4}\d{7}([A-Z0-9]?){0,16}\b", "IBAN"),
     (r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", "IP-Adresse"),
 ]

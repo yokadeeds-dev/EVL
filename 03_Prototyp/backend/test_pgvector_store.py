@@ -101,3 +101,10 @@ class TestPgVectorStore:
         plan = "\n".join(r[0] for r in rows)
         assert "Index Scan" in plan, f"HNSW-Index nicht genutzt:\n{plan}"
         assert "Seq Scan" not in plan, f"Fällt auf Seq Scan zurück:\n{plan}"
+
+    def test_existing_hashes_for_ingest_dedup(self):
+        # Regression: ingest_documents griff auf store._store zu (nur In-Memory) und brach mit pgvector ab.
+        store = _store()
+        p = uuid.uuid4().hex[:8]
+        store.upsert(_doc(f"{p}-h", "hash test", None))
+        assert f"{p}-h" in store.existing_hashes()
