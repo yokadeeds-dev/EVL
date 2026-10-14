@@ -246,7 +246,9 @@ def kb_reset(user: UserContext = Depends(require_admin)):
 
 PII_PATTERNS = [
     (r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b", "E-Mail-Adresse"),
-    (r"\b(\+49|0)[0-9\s\-/]{7,}\b", "Telefonnummer"),
+    # Kein \b vor "+": nach einem Leerzeichen gibt es dort keine Wortgrenze, "+49 170 …"
+    # rutschte durch (gefunden per eval/redteam). Lookbehind statt Wortgrenze.
+    (r"(?<![\w+])(?:\+49|0049|0)[\s\-/]?\d[\d\s\-/]{6,}\d", "Telefonnummer"),
     (r"\b[A-Z]{2}\d{2}[A-Z0-9]{4}\d{7}([A-Z0-9]?){0,16}\b", "IBAN"),
     (r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", "IP-Adresse"),
 ]

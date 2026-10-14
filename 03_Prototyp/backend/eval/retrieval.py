@@ -141,7 +141,8 @@ def main(argv: list[str] | None = None) -> int:
 
     baseline_path = EVAL_DIR / f"baseline_{args.embedder}.json"
     if args.update_baseline:
-        baseline_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        baseline_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8",
+                                 newline="\n")
         print(f"\nBaseline geschrieben: {baseline_path.name}")
         return 0
     if not baseline_path.exists():
