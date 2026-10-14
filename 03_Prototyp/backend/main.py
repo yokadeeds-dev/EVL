@@ -216,7 +216,7 @@ def ingest_documents(req: IngestRequest, user: UserContext = Depends(require_adm
         
         # Generiere Sandbox Docs mit Mandant-Metadaten falls abwesend
         if not os.path.exists(meta_path):
-            synthetic_docs.generate_synthetic_docs(num_docs=100, out_dir=req.path)
+            synthetic_docs.generate_docs(output_dir=req.path)
             
         stats = engine_ingest_documents(meta_path, req.path, store, verbose=True)
         return {"status": "ok", "documents_ingested": stats["ingested"]}
