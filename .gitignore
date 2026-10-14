@@ -29,3 +29,6 @@ dist/
 # Local virtualenvs
 .venv/
 qdrant_store.json
+
+# Eval-Laeufe: Traces sind gross und reproduzierbar
+03_Prototyp/backend/eval/runs/*/traces/
