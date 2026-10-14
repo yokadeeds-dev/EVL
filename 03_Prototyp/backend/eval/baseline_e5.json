@@ -2,7 +2,7 @@
   "hit_at_k": 1.0,
   "precision_at_k": 1.0,
   "mrr": 1.0,
-  "fact_recall": 0.7812,
+  "fact_recall": 1.0,
   "acl_leaks": 0,
   "n_items": 25,
   "by_group": {
@@ -16,7 +16,7 @@
       "hit_at_k": 1.0,
       "precision_at_k": 1.0,
       "mrr": 1.0,
-      "fact_recall": 0.6667
+      "fact_recall": 1.0
     },
     "mandant": {
       "hit_at_k": 1.0,
@@ -28,7 +28,7 @@
       "hit_at_k": 1.0,
       "precision_at_k": 1.0,
       "mrr": 1.0,
-      "fact_recall": 0.9286
+      "fact_recall": 1.0
     },
     "unbeantwortbar": {
       "hit_at_k": null,
