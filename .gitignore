@@ -25,3 +25,7 @@ dist/
 
 # Lokale Editor-/Tooling-Configs
 .claude/
+
+# Local virtualenvs
+.venv/
+qdrant_store.json

@@ -19,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field
 
+import generation
 import jwt_auth
 import redis_backend
 import synthetic_docs
@@ -177,61 +178,26 @@ def generate_text(req: GenerateRequest, user: UserContext = Depends(require_user
     if llm_client is None:
         raise HTTPException(status_code=503, detail="LLM-Client nicht initialisiert.")
 
-    template = TEMPLATES[req.text_type]
-
     # PII-Check auf dem User-Input VOR teurer RAG-/LLM-Arbeit (F6: früh ablehnen).
     _check_for_pii(req.topic)
 
-    # RAG
-    context = ""
-    chunks_used = 0
-    rag_active = False
-    if req.use_rag and rag and store and store.count() > 0:
-        if req.target_mandant and req.target_mandant in user.effective_allowed():
-            from dataclasses import replace
-            effective_user = replace(user, allowed_mandate=[req.target_mandant])
-        else:
-            effective_user = user
-            
-        query_results = rag.query(effective_user, req.topic, top_k=5)
-        valid_excerpts = [r.excerpt for r in query_results if r.acl_valid]
-        context = "\n\n---\n\n".join(valid_excerpts)
-        chunks_used = len(valid_excerpts)
-        rag_active = bool(chunks_used > 0)
+    if req.use_rag:
+        retrieval = generation.retrieve(rag, store.count() if store else 0, user, req.topic,
+                                        req.target_mandant, top_k=5)
+    else:
+        retrieval = generation.Retrieval([], [])
 
-    if not context:
-        context = (
-            "Kein spezifisches Firmenwissen verfügbar. "
-            "Allgemeines Branchenwissen verwenden und darauf hinweisen, "
-            "dass der Text mit unternehmensspezifischen Informationen ergänzt werden sollte."
-        )
-
-    user_prompt = template["user_template"].format(context=context, topic=req.topic)
-
-    model = os.getenv("LLM_MODEL", "claude-opus-4-5")
-    # Cache-Key ueber alle preisbestimmenden Eingaben (Modell, System, Prompt inkl.
-    # ACL-gefiltertem RAG-Kontext) → nur identischer Input teilt einen Eintrag.
-    ck = redis_backend.cache_key(model, template["system"], user_prompt)
-    result_text = redis_backend.cache_get(ck)
-    if result_text is None:
-        try:
-            message = llm_client.messages.create(
-                model=model,
-                max_tokens=1024,
-                system=template["system"],
-                messages=[{"role": "user", "content": user_prompt}],
-            )
-        except anthropic.APIStatusError as e:
-            raise HTTPException(status_code=502, detail=f"LLM-API Fehler: {e.message}")
-        result_text = message.content[0].text
-        redis_backend.cache_set(ck, result_text)
+    try:
+        gen = generation.generate(llm_client, retrieval, req.text_type, req.topic)
+    except anthropic.APIStatusError as e:
+        raise HTTPException(status_code=502, detail=f"LLM-API Fehler: {e.message}")
 
     return GenerateResponse(
-        result=result_text,
+        result=gen.result,
         text_type=req.text_type,
-        label=template["label"],
-        context_chunks_used=chunks_used,
-        rag_active=rag_active,
+        label=gen.label,
+        context_chunks_used=gen.chunks_used,
+        rag_active=gen.chunks_used > 0,
     )
 
 
