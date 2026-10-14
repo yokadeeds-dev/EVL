@@ -1,0 +1,63 @@
+name: RAG-Evaluation (manuell)
+
+# Vollstaendige Antwort-Evaluation mit echtem LLM und Judge (~$1,90 je Lauf).
+# Bewusst NICHT bei jedem PR: das kostenlose Retrieval-/Red-Team-Gate laeuft in ci.yml.
+# Voraussetzung: Repository-Secret ANTHROPIC_API_KEY.
+
+on:
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: "Name der Variante (baseline, v3, ...)"
+        required: true
+        default: "ci"
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: 03_Prototyp/backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Secret pruefen
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::error::Secret ANTHROPIC_API_KEY fehlt (Settings → Secrets → Actions)."; exit 1
+          fi
+
+      - name: Abhaengigkeiten (CPU-Torch fuer e5)
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt -r requirements-eval.txt
+
+      - name: Retrieval (e5)
+        run: python -m eval.retrieval --embedder e5
+
+      - name: Red-Teaming (inkl. LLM)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python -m eval.redteam --llm
+
+      - name: Antwort-Evaluation
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python -m eval.answers --variant "${{ inputs.variant }}"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-${{ inputs.variant }}
+          path: 03_Prototyp/backend/eval/runs/${{ inputs.variant }}

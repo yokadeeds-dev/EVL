@@ -23,6 +23,7 @@ Mitarbeitende verlieren wöchentlich mehrere Stunden mit dem manuellen Erstellen
 | Doku / Guide für Mitarbeitende | ✅ | Markdown-Anleitung enthalten |
 | Business Case | ✅ | ~8.760 € Netto-Einsparung/Jahr |
 | AI Act / Haftung / Urheberrecht | ✅ | vertrag_haftung.md |
+| RAG-Evaluation, Red-Teaming, Observability | ✅ | DeepEval + RAGAS · `03_Prototyp/backend/eval/RESULTS.md` · ADR 0004 |
 
 ---
 

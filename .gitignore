@@ -32,3 +32,5 @@ qdrant_store.json
 
 # Eval-Laeufe: Traces sind gross und reproduzierbar
 03_Prototyp/backend/eval/runs/*/traces/
+03_Prototyp/backend/eval/runs/report.html
+03_Prototyp/backend/eval/runs/trajectory/
