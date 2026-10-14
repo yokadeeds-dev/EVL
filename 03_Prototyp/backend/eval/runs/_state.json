@@ -1,0 +1,43 @@
+{
+  "metrics": [
+    {
+      "id": "faithfulness_ragas",
+      "label": "Faithful RAGAS",
+      "kind": "continuous"
+    },
+    {
+      "id": "faithfulness_de",
+      "label": "Faithful DE",
+      "kind": "continuous"
+    },
+    {
+      "id": "fact_coverage",
+      "label": "Fakten",
+      "kind": "continuous"
+    },
+    {
+      "id": "context_recall_ragas",
+      "label": "Ctx-Recall",
+      "kind": "continuous"
+    },
+    {
+      "id": "relevancy_de",
+      "label": "Relevanz",
+      "kind": "continuous"
+    },
+    {
+      "id": "abstention",
+      "label": "Enthaltung",
+      "kind": "continuous"
+    },
+    {
+      "id": "acl_safe",
+      "label": "ACL sicher",
+      "kind": "continuous"
+    }
+  ],
+  "perf_fields": [
+    "latency_s",
+    "usage"
+  ]
+}
