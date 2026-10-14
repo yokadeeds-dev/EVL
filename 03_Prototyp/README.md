@@ -25,6 +25,10 @@ grüner CI (Lint · Test · Scan · Build).
 4. **Persistenz** – Postgres/pgvector als geteilter Vektor-Store, Multi-Worker-fähig (PR #4).
 5. **Sicherheit & Typsicherheit** – echte Passwort-Verifikation im Login;
    Frontend-Migration nach TypeScript mit `tsc`-Gate in der CI.
+6. **Qualität messbar** – RAG-Evaluation (Golden Set, DeepEval + RAGAS mit Claude-Judge,
+   Red-Teaming) und Telemetrie mit SLOs; zwei gemessene Verbesserungen
+   (Faithfulness 0,34 → 0,61). Details: [backend/eval/RESULTS.md](backend/eval/RESULTS.md),
+   [ADR 0004](../docs/adr/0004-rag-evaluation-und-observability.md).
 
 Das Skelett war ab Schritt 1 lauffähig; jede spätere Schicht erweiterte es,
 ohne den durchgängigen Pfad je zu brechen.
@@ -97,6 +101,9 @@ npm run dev
 03_Prototyp/
 ├── backend/
 │   ├── main.py              ← FastAPI App (JWT Auth, Endpoints)
+│   ├── generation.py        ← Retrieval → Prompt → LLM (von API und Evaluation geteilt)
+│   ├── telemetry.py         ← Latenz/Tokens/Kosten/SLOs → /admin/metrics
+│   ├── eval/                ← Golden Set, Retrieval-/Antwort-Evaluation, Red-Teaming
 │   ├── rag_engine.py        ← Die Qdrant-RAG Engine inkl. Semantic Embeddings
 │   ├── acl.py               ← Chinese-Walls + Mandanten-Logik (UserContext)
 │   ├── jwt_auth.py          ← Pure Python HMAC SHA-256 Auth Server
@@ -121,3 +128,4 @@ Alle Endpoints erfordern ein gültiges JWT (`Authorization: Bearer <Token>`), we
 | `/me` | Zeigt den aktuellen ACL-UserContext (Welche Mandate sind wie freigeschaltet?). | App Initialization |
 | `/generate` | Haupt-Endpoint. Der User-Kontext zwingt das Qdrant-Retrieval strictly zum Bypass bestimmter Chinese Walls. | Assistenz |
 | `/admin/ingest` | Triggert den Embedding-Prozess durch `sentence-transformers`. | Ingestion |
+| `/admin/metrics` | Latenz p50/p95, Tokens, Kosten, Cache-Trefferquote, SLO-Status; `?format=prometheus`. | Observability |

@@ -83,6 +83,12 @@ class SemanticEmbedder:
 
 embedder = SemanticEmbedder()
 
+# Wie viel eines Treffers als LLM-Kontext übergeben wird. Früher fest 200 Zeichen —
+# die Evaluation hat gezeigt, dass damit 22 % der Pflicht-Fakten trotz korrekt
+# gefundenem Dokument das LLM nie erreichen (eval/RESULTS.md). Die Obergrenze
+# schützt die Token-Kosten bei langen hochgeladenen Dokumenten.
+CONTEXT_CHARS = int(os.getenv("RAG_CONTEXT_CHARS", "2000"))
+
 
 def _cosine(a: list[float], b: list[float]) -> float:
     return sum(x*y for x, y in zip(a, b))
@@ -171,6 +177,9 @@ class InMemoryQdrant:
     def count(self) -> int:
         return len(self._store)
 
+    def existing_hashes(self) -> set[str]:
+        return {d.doc_hash for d in self._store.values()}
+
     def clear(self) -> None:
         self._store.clear()
         self._save()
@@ -197,7 +206,9 @@ def ingest_documents(
     docs_path = Path(docs_dir)
 
     stats = {"ingested": 0, "skipped": 0, "errors": 0}
-    existing_hashes = {d.doc_hash for d in store._store.values()}
+    # Über die Store-Schnittstelle, nicht store._store: das gibt es nur im In-Memory-Store,
+    # mit Postgres/pgvector brach der Ingest sonst mit AttributeError ab.
+    existing_hashes = store.existing_hashes()
 
     t0 = time.perf_counter()
     for meta in all_meta:
@@ -278,7 +289,7 @@ class LegalRAGEngine:
         results = []
         for doc, score in raw_results:
             valid, reason = validate_result({"mandant_id": doc.mandant_id}, user)
-            excerpt = doc.text[:200].replace("\n", " ") + "…"
+            excerpt = doc.text if len(doc.text) <= CONTEXT_CHARS else doc.text[:CONTEXT_CHARS] + "…"
             results.append(QueryResult(
                 doc_id=doc.doc_id,
                 title=doc.title,

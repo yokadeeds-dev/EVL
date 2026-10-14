@@ -2,7 +2,18 @@
 Prompt-Templates für den Content-Assistant.
 Jedes Template definiert einen System-Prompt und einen User-Prompt-Rahmen.
 Der {context}-Block wird durch RAG-Chunks aus der Wissensbasis befüllt.
+
+GROUNDING_RULES wird an jeden System-Prompt angehängt. Anlass (eval/RESULTS.md): mit
+vollständigem Kontext beantwortete das Modell Fragen zu einem nicht verfügbaren Mandanten
+mit den Vertragsdaten eines ANDEREN Mandanten (Enthaltungsrate 1.0 → 0.4).
 """
+
+GROUNDING_RULES = (
+    " Verbindliche Regeln: Erfinde keine konkreten Angaben (Beträge, Fristen, Klauseln, Namen, "
+    "Daten), die nicht im bereitgestellten Firmenwissen stehen. Betrifft das Firmenwissen ein "
+    "anderes Unternehmen, einen anderen Vertrag oder ein anderes Thema als angefragt, sage das "
+    "ausdrücklich und übertrage keine Angaben daraus auf die Anfrage."
+)
 
 TEMPLATES: dict[str, dict] = {
     "seo": {
@@ -81,3 +92,6 @@ TEMPLATES: dict[str, dict] = {
         ),
     },
 }
+
+for _template in TEMPLATES.values():
+    _template["system"] += GROUNDING_RULES

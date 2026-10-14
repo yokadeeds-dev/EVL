@@ -17,7 +17,7 @@ unbewusste: die Lücken sind bekannt und benannt, nicht übersehen.
 
 | Thema | Warum jetzt nicht | Trigger für Umsetzung |
 |-------|-------------------|-----------------------|
-| **Observability** (OpenTelemetry, Prometheus, SLOs) | Größter realer Gap, aber ohne Produktionslast kein Messwert. | Erster echter Betrieb / Pilot mit Nutzerlast. |
+| **Observability** (OpenTelemetry, Prometheus, SLOs) | ~~Größter realer Gap~~ **Teilweise umgesetzt (ADR 0004, 2026-10-14):** Telemetrie pro Anfrage, `/admin/metrics` inkl. Prometheus-Format, SLOs aus Messwerten. Offen: Aggregation über mehrere Worker, Tracing (OTel). | Erster echter Betrieb / Pilot mit Nutzerlast. |
 | **Circuit-Breaker vor dem LLM** | Der Anthropic-SDK retryt bereits (`max_retries`); Fehler werden als 502 sauber durchgereicht. Ein echter Breaker (z. B. `pybreaker`, **nicht** `tenacity` — das ist Retry, kein Breaker) lohnt erst bei echter Ausfall-Resilienz-Anforderung. | Wiederkehrende LLM-Ausfälle / Latenz-SLO verletzt. |
 | **Asynchrone Job-Queue** (Redis Streams, Background-Worker) | `/generate` ist synchron und für den Prototyp schnell genug; Queue-Infra erhöht die Komplexität ohne aktuellen Bedarf. | Lange Ingest-/Batch-Jobs oder Priorisierung (Admin-Queries first). |
 | **Automatischer Deploy** | CI baut & scannt Images; der Deploy-Job ist ein Approval-Gate-Gerüst. Auto-Deploy braucht ein reales Zielsystem. | Definiertes Zielsystem (Server/K8s) steht fest. |
