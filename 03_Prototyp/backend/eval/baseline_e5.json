@@ -1,0 +1,40 @@
+{
+  "hit_at_k": 1.0,
+  "precision_at_k": 1.0,
+  "mrr": 1.0,
+  "fact_recall": 0.7812,
+  "acl_leaks": 0,
+  "n_items": 25,
+  "by_group": {
+    "acl_negativ": {
+      "hit_at_k": null,
+      "precision_at_k": null,
+      "mrr": null,
+      "fact_recall": null
+    },
+    "leitfaden": {
+      "hit_at_k": 1.0,
+      "precision_at_k": 1.0,
+      "mrr": 1.0,
+      "fact_recall": 0.6667
+    },
+    "mandant": {
+      "hit_at_k": 1.0,
+      "precision_at_k": 1.0,
+      "mrr": 1.0,
+      "fact_recall": null
+    },
+    "praezedenz": {
+      "hit_at_k": 1.0,
+      "precision_at_k": 1.0,
+      "mrr": 1.0,
+      "fact_recall": 0.9286
+    },
+    "unbeantwortbar": {
+      "hit_at_k": null,
+      "precision_at_k": null,
+      "mrr": null,
+      "fact_recall": null
+    }
+  }
+}

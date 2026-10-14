@@ -1,0 +1,211 @@
+# Golden Set fuer die RAG-Evaluation (Retrieval + Antwort).
+#
+# Jede Frage ist bewusst PARAPHRASIERT (andere Woerter als im Dokument), damit die
+# Evaluation semantisches Retrieval misst und nicht nur Wort-Ueberlappung.
+#
+# Felder
+#   id          stabile ID (Regressionen werden pro ID verglichen)
+#   user        anwalt_a | anwalt_b | anwalt_c  (bestimmt die ACL / Chinese Wall)
+#   question    Nutzer-Eingabe (= "topic" am /generate-Endpoint)
+#   text_type   Template fuer die Antwort-Evaluation (faq = Frage/Antwort-Format)
+#   relevant    wann ein Treffer als relevant zaehlt:
+#                 title_prefix: Titel beginnt mit einem der Strings
+#                 mandant:      Dokument gehoert zu diesem Mandat
+#               leer = es gibt KEIN relevantes Dokument (Abstain-Fall)
+#   facts       Pflicht-Fakten: muessen im LLM-Kontext (Retrieval) bzw. in der
+#               Antwort (Generation) vorkommen, case-insensitive Teilstring
+#   reference   Musterantwort fuer Judge-Metriken (RAGAS/DeepEval)
+#
+# Korpus: synthetic_docs.generate_docs(), Seed 42. Leitfaeden/Praezedenzfaelle sind
+# fuer alle sichtbar (mandant_id = null); Vertraege gehoeren genau einem Mandat.
+# ACL: anwalt_a -> M001, M003 (M002 gesperrt) · anwalt_b -> M002, M003 (M001 gesperrt)
+#      anwalt_c -> M004 (haelt M001 UND M002 -> Konflikt, beide gesperrt)
+
+items:
+  # ── Interne Leitfaeden ─────────────────────────────────────────────────────
+  - id: L01
+    user: anwalt_a
+    question: Bis wann muss ein Datenleck der Aufsichtsbehörde gemeldet werden?
+    text_type: faq
+    relevant: {title_prefix: ["Notfallprotokoll: Datenpanne"]}
+    facts: ["72 Stunden"]
+    reference: Die Meldung an die Behörde nach Art. 33 DSGVO muss innerhalb von 72 Stunden erfolgen; intern ist die Datenschutzbeauftragte innerhalb von 2 Stunden zu informieren.
+  - id: L02
+    user: anwalt_b
+    question: Wen muss ich bei einem Verdacht auf Datenabfluss zuerst informieren und wie schnell?
+    text_type: faq
+    relevant: {title_prefix: ["Notfallprotokoll: Datenpanne"]}
+    facts: ["Datenschutzbeauftragte", "2 Stunden"]
+    reference: Bei Verdacht auf eine Datenpanne ist innerhalb von 2 Stunden die Datenschutzbeauftragte zu informieren.
+  - id: L03
+    user: anwalt_c
+    question: Welchen Stundensatz rechnen wir für Partner ab?
+    text_type: faq
+    relevant: {title_prefix: ["Abrechnung und Stundensätze 2026"]}
+    facts: ["450 EUR"]
+    reference: Partner werden mit 450 EUR pro Stunde abgerechnet.
+  - id: L04
+    user: anwalt_a
+    question: Wie viel Prozent der Fahrtzeit dürfen wir dem Mandanten in Rechnung stellen?
+    text_type: faq
+    relevant: {title_prefix: ["Abrechnung und Stundensätze 2026"]}
+    facts: ["50%"]
+    reference: Reisezeiten werden zu 50 % abgerechnet.
+  - id: L05
+    user: anwalt_b
+    question: Was kostet eine Stunde Paralegal-Arbeit?
+    text_type: faq
+    relevant: {title_prefix: ["Abrechnung und Stundensätze 2026"]}
+    facts: ["120 EUR"]
+    reference: Paralegals werden mit 120 EUR pro Stunde abgerechnet.
+  - id: L06
+    user: anwalt_c
+    question: Darf ich Mandantenakten auf meinem privaten Laptop oder in einer privaten Cloud bearbeiten?
+    text_type: faq
+    relevant: {title_prefix: ["Datenschutz-Leitfaden für Anwälte"]}
+    facts: ["untersagt"]
+    reference: Nein. Mandantendaten dürfen nur auf freigegebenen Systemen verarbeitet werden; private Geräte oder Cloud-Dienste ohne IT-Freigabe sind untersagt.
+  - id: L07
+    user: anwalt_a
+    question: Welche Verschlüsselung ist für E-Mails an Mandanten vorgeschrieben?
+    text_type: faq
+    relevant: {title_prefix: ["Kommunikationsrichtlinie: Verschlüsselung"]}
+    facts: ["S/MIME", "PGP"]
+    reference: Mandantenkommunikation per E-Mail muss mit S/MIME oder PGP verschlüsselt werden.
+  - id: L08
+    user: anwalt_b
+    question: Was ist zu tun, bevor wir ein neues Mandat übernehmen?
+    text_type: faq
+    relevant: {title_prefix: ["Interne Richtlinie: Mandatsprüfung und Interessenkonflikte"]}
+    facts: ["Konfliktprüfung"]
+    reference: Vor Annahme eines neuen Mandats ist eine Konfliktprüfung im Fallverwaltungssystem durchzuführen; bei Zweifeln ist die Bereichsleitung zu konsultieren.
+  - id: L09
+    user: anwalt_c
+    question: Wo müssen Chinese Walls dokumentiert werden und wen betreffen sie?
+    text_type: faq
+    relevant: {title_prefix: ["Interne Richtlinie: Mandatsprüfung und Interessenkonflikte"]}
+    facts: ["im System einzutragen"]
+    reference: Chinese Walls sind im System einzutragen und betreffen alle am Mandat beteiligten Personen.
+
+  # ── Praezedenzfaelle ───────────────────────────────────────────────────────
+  - id: P01
+    user: anwalt_a
+    question: Darf ein Käufer eine heruntergeladene Software-Lizenz weiterverkaufen?
+    text_type: faq
+    relevant: {title_prefix: ["BGH-Urteil zu Softwarelizenzrecht"]}
+    facts: ["Erschöpfungslehre", "unbrauchbar"]
+    reference: Ja. Nach dem BGH gilt die Erschöpfungslehre auch für Software-Downloads; der Ersterwerber darf weiterveräußern, wenn er seine eigene Kopie unbrauchbar macht.
+  - id: P02
+    user: anwalt_b
+    question: Kann man in allgemeinen Geschäftsbedingungen die Haftung für leichte Fahrlässigkeit komplett ausschließen?
+    text_type: faq
+    relevant: {title_prefix: ["OLG Düsseldorf zu Haftungsausschluss AGB"]}
+    facts: ["unwirksam", "309"]
+    reference: Nein. Das OLG Düsseldorf hat einen vollständigen Ausschluss der Haftung für leichte Fahrlässigkeit nach § 309 Nr. 7 BGB als unwirksam eingestuft.
+  - id: P03
+    user: anwalt_c
+    question: Bekommt man auch für kleine Datenschutzverstöße Schmerzensgeld?
+    text_type: faq
+    relevant: {title_prefix: ["EuGH zu DSGVO-Schadensersatz"]}
+    facts: ["Erheblichkeitsschwelle", "Art. 82"]
+    reference: Ja. Laut EuGH muss ein immaterieller Schaden nach Art. 82 DSGVO keine Erheblichkeitsschwelle überwinden; jeder Kontrollverlust über personenbezogene Daten kann einen Anspruch begründen.
+  - id: P04
+    user: anwalt_a
+    question: Kann der Arbeitgeber die Erlaubnis zur Arbeit von zu Hause jederzeit einseitig zurücknehmen?
+    text_type: faq
+    relevant: {title_prefix: ["BAG zu Homeoffice-Vereinbarungen"]}
+    facts: ["AGB-Kontrolle"]
+    reference: Nicht ohne Weiteres. Das BAG verlangt, dass einseitige Widerrufsvorbehalte in Homeoffice-Vereinbarungen einer AGB-Kontrolle standhalten.
+  - id: P05
+    user: anwalt_b
+    question: Sind Texte, die eine künstliche Intelligenz geschrieben hat, urheberrechtlich geschützt?
+    text_type: faq
+    relevant: {title_prefix: ["LG München zu KI-generierten Inhalten"]}
+    facts: ["Schöpfungshöhe"]
+    reference: Nein. Nach dem LG München sind KI-generierte Texte ohne menschliche Schöpfungshöhe nicht urheberrechtlich schutzfähig, unabhängig vom Modell.
+  - id: P06
+    user: anwalt_c
+    question: Gebrauchtsoftware aus dem Internet – ist der Wiederverkauf rechtlich erlaubt?
+    text_type: faq
+    relevant: {title_prefix: ["BGH-Urteil zu Softwarelizenzrecht"]}
+    facts: ["Erschöpfungslehre"]
+    reference: Ja, die Erschöpfungslehre gilt laut BGH auch für Downloads, sofern die eigene Kopie unbrauchbar gemacht wird.
+  - id: P07
+    user: anwalt_a
+    question: Wer hat das Urheberrecht an einem von ChatGPT geschriebenen Werbetext?
+    text_type: faq
+    relevant: {title_prefix: ["LG München zu KI-generierten Inhalten"]}
+    facts: ["nicht urheberrechtlich schutzfähig"]
+    reference: Niemand – ohne menschliche Schöpfungshöhe sind KI-generierte Texte nach dem LG München nicht urheberrechtlich schutzfähig.
+
+  # ── Mandantenvertraege (ACL-relevant) ──────────────────────────────────────
+  - id: M01
+    user: anwalt_a
+    question: Welche Haftungsregelungen enthalten die Verträge der TechCorp AG?
+    text_type: faq
+    relevant: {mandant: M001}
+    facts: []
+    reference: Die Verträge der TechCorp AG beschränken die Haftung des Auftragnehmers auf Vorsatz und grobe Fahrlässigkeit.
+  - id: M02
+    user: anwalt_b
+    question: Welche Zahlungsziele gelten in den Verträgen mit der DigitalVentures GmbH?
+    text_type: faq
+    relevant: {mandant: M002}
+    facts: []
+    reference: Die Vergütung ist innerhalb von 30 Tagen nach Rechnungsstellung fällig.
+  - id: M03
+    user: anwalt_c
+    question: Wo ist der Gerichtsstand in den Verträgen der Müller Immobilien KG?
+    text_type: faq
+    relevant: {mandant: M004}
+    facts: []
+    reference: Der Gerichtsstand ist je Vertrag festgelegt (z. B. Hamburg, München, Berlin, Frankfurt am Main oder Düsseldorf).
+  - id: M04
+    user: anwalt_b
+    question: Mit welcher Frist können die Verträge der Stadtwerke Hamm gekündigt werden?
+    text_type: faq
+    relevant: {mandant: M003}
+    facts: []
+    reference: Die Verträge sind mit einer Frist von 4, 8 oder 12 Wochen zum Monatsende kündbar, je nach Vertrag.
+
+  # ── ACL-Negativfaelle: relevante Dokumente existieren, sind aber GESPERRT ──
+  - id: X01
+    user: anwalt_a
+    question: Zeig mir die Vergütung in den Verträgen der DigitalVentures GmbH.
+    text_type: faq
+    relevant: {}
+    forbidden_mandates: [M002]
+    facts: []
+    reference: Dazu liegen mir keine Informationen vor.
+  - id: X02
+    user: anwalt_b
+    question: Welche Haftung hat die TechCorp AG in ihren Kaufverträgen vereinbart?
+    text_type: faq
+    relevant: {}
+    forbidden_mandates: [M001]
+    facts: []
+    reference: Dazu liegen mir keine Informationen vor.
+  - id: X03
+    user: anwalt_c
+    question: Welche Lizenzverträge hat die TechCorp AG abgeschlossen?
+    text_type: faq
+    relevant: {}
+    forbidden_mandates: [M001, M002]
+    facts: []
+    reference: Dazu liegen mir keine Informationen vor.
+
+  # ── Unbeantwortbar (kein Dokument im Korpus) ───────────────────────────────
+  - id: U01
+    user: anwalt_a
+    question: Wie hoch ist die Kurtaxe in Hamm?
+    text_type: faq
+    relevant: {}
+    facts: []
+    reference: Dazu liegen in der Wissensbasis keine Informationen vor.
+  - id: U02
+    user: anwalt_b
+    question: Welche Urlaubsregelung gilt für Associates?
+    text_type: faq
+    relevant: {}
+    facts: []
+    reference: Dazu liegen in der Wissensbasis keine Informationen vor.
