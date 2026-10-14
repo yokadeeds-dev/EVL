@@ -10,12 +10,14 @@ Starten:
 
 import os
 import re
+import time
 from contextlib import asynccontextmanager
 
 import anthropic
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field
 
@@ -23,11 +25,13 @@ import generation
 import jwt_auth
 import redis_backend
 import synthetic_docs
+import telemetry
 from acl import UserContext, authenticate
 from auth import require_admin, require_user
 from prompts import TEMPLATES
 from rag_engine import InMemoryQdrant, LegalRAGEngine
 from rag_engine import ingest_documents as engine_ingest_documents
+from telemetry import RequestEvent
 
 load_dotenv()
 
@@ -172,25 +176,50 @@ def get_me(user: UserContext = Depends(require_user)):
 @app.post("/generate", response_model=GenerateResponse)
 def generate_text(req: GenerateRequest, user: UserContext = Depends(require_user)):
     """RAG-Retrieval + LLM-Generierung (ACL-geschützt)."""
-    # Rate-Limit pro User-Identität (nicht pro API-Key-String).
-    _check_rate_limit(user.user_id)
-
-    if llm_client is None:
-        raise HTTPException(status_code=503, detail="LLM-Client nicht initialisiert.")
-
-    # PII-Check auf dem User-Input VOR teurer RAG-/LLM-Arbeit (F6: früh ablehnen).
-    _check_for_pii(req.topic)
-
-    if req.use_rag:
-        retrieval = generation.retrieve(rag, store.count() if store else 0, user, req.topic,
-                                        req.target_mandant, top_k=5)
-    else:
-        retrieval = generation.Retrieval([], [])
-
+    t0 = time.perf_counter()
+    event = RequestEvent(status="error", text_type=req.text_type, user_id=user.user_id,
+                         model=generation.model_name())
     try:
-        gen = generation.generate(llm_client, retrieval, req.text_type, req.topic)
-    except anthropic.APIStatusError as e:
-        raise HTTPException(status_code=502, detail=f"LLM-API Fehler: {e.message}")
+        # Rate-Limit pro User-Identität (nicht pro API-Key-String).
+        try:
+            _check_rate_limit(user.user_id)
+        except HTTPException:
+            event.status = "rate_limited"
+            raise
+
+        if llm_client is None:
+            raise HTTPException(status_code=503, detail="LLM-Client nicht initialisiert.")
+
+        # PII-Check auf dem User-Input VOR teurer RAG-/LLM-Arbeit (F6: früh ablehnen).
+        try:
+            _check_for_pii(req.topic)
+        except HTTPException:
+            event.status = "pii_rejected"
+            raise
+
+        if req.use_rag:
+            retrieval = generation.retrieve(rag, store.count() if store else 0, user, req.topic,
+                                            req.target_mandant, top_k=5)
+        else:
+            retrieval = generation.Retrieval([], [])
+        event.retrieval_ms = round(retrieval.latency_ms, 1)
+        event.context_chunks = len(retrieval.contexts)
+
+        try:
+            gen = generation.generate(llm_client, retrieval, req.text_type, req.topic)
+        except anthropic.APIStatusError as e:
+            event.status = "llm_error"
+            raise HTTPException(status_code=502, detail=f"LLM-API Fehler: {e.message}")
+
+        event.status = "ok"
+        event.model = gen.served_model or gen.model
+        event.llm_ms = round(gen.llm_latency_ms, 1)
+        event.input_tokens, event.output_tokens = gen.input_tokens, gen.output_tokens
+        event.cost_usd = telemetry.cost_usd(gen.model, gen.input_tokens, gen.output_tokens)
+        event.cache_hit = gen.cache_hit
+    finally:
+        event.total_ms = round((time.perf_counter() - t0) * 1000, 1)
+        telemetry.telemetry.record(event)
 
     return GenerateResponse(
         result=gen.result,
@@ -222,6 +251,15 @@ def ingest_documents(req: IngestRequest, user: UserContext = Depends(require_adm
         return {"status": "ok", "documents_ingested": stats["ingested"]}
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.get("/admin/metrics")
+def metrics(format: str = "json", user: UserContext = Depends(require_admin)):
+    """Latenz, Tokens, Kosten, Cache-Trefferquote und SLO-Status (dieser Worker).
+    format=prometheus liefert das Prometheus-Text-Format."""
+    if format == "prometheus":
+        return PlainTextResponse(telemetry.telemetry.prometheus())
+    return telemetry.telemetry.snapshot()
 
 
 @app.get("/admin/kb-status", response_model=KBStatusResponse)
