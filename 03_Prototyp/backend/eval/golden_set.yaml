@@ -84,7 +84,7 @@ items:
     question: Wo müssen Chinese Walls dokumentiert werden und wen betreffen sie?
     text_type: faq
     relevant: {title_prefix: ["Interne Richtlinie: Mandatsprüfung und Interessenkonflikte"]}
-    facts: ["im System einzutragen"]
+    facts: [["im System einzutragen", "Fallverwaltungssystem einzutragen", "im Fallverwaltungssystem"]]
     reference: Chinese Walls sind im System einzutragen und betreffen alle am Mandat beteiligten Personen.
 
   # ── Praezedenzfaelle ───────────────────────────────────────────────────────

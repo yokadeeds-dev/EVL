@@ -28,7 +28,7 @@ from pathlib import Path
 from statistics import mean
 
 import generation
-from eval.common import EVAL_DIR, Item, build_engine, load_items, use_embedder
+from eval.common import EVAL_DIR, Item, build_engine, fact_present, load_items, use_embedder
 
 TOP_K = 5
 TOLERANCE = 0.02  # erlaubte Verschlechterung je Kennzahl (absolut), Rauschen bei Retrieval = 0
@@ -65,8 +65,8 @@ def score_item(item: Item, rag, store) -> ItemScore:
 
     fact_recall = None
     if item.facts:
-        context = "\n".join(retrieval.contexts).lower()
-        fact_recall = sum(f.lower() in context for f in item.facts) / len(item.facts)
+        context = "\n".join(retrieval.contexts)
+        fact_recall = sum(fact_present(f, context) for f in item.facts) / len(item.facts)
 
     return ItemScore(item.id, item.group, hit, prec, rr, fact_recall, leaks,
                      [f"{r.title} [{r.mandant_id or 'öffentlich'}]" for r in results])

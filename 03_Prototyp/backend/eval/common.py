@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import random
+import re
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -17,6 +18,21 @@ from rag_engine import Document, InMemoryQdrant, LegalRAGEngine, QueryResult
 EVAL_DIR = Path(__file__).resolve().parent
 
 
+def normalize(text: str) -> str:
+    """Schreibvarianten angleichen, damit korrekte Antworten nicht an Formatierung scheitern
+    ("50 %" = "50%", "450 €" = "450 EUR", Zeilenumbrüche = Leerzeichen)."""
+    t = text.lower().replace("€", " eur").replace("euro", "eur")
+    t = re.sub(r"\s+", " ", t)
+    return re.sub(r"\s+%", "%", t).strip()
+
+
+def fact_present(fact: str | list[str], text: str) -> bool:
+    """Ein Fakt ist ein String oder eine Liste gleichwertiger Formulierungen."""
+    alternatives = fact if isinstance(fact, list) else [fact]
+    norm = normalize(text)
+    return any(normalize(a) in norm for a in alternatives)
+
+
 @dataclass
 class Item:
     id: str
@@ -24,7 +40,7 @@ class Item:
     question: str
     text_type: str
     relevant: dict
-    facts: list[str]
+    facts: list  # je Eintrag: String oder Liste gleichwertiger Formulierungen
     reference: str
     forbidden_mandates: list[str] = field(default_factory=list)
 
