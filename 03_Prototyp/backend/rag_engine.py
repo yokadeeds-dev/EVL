@@ -177,6 +177,9 @@ class InMemoryQdrant:
     def count(self) -> int:
         return len(self._store)
 
+    def existing_hashes(self) -> set[str]:
+        return {d.doc_hash for d in self._store.values()}
+
     def clear(self) -> None:
         self._store.clear()
         self._save()
@@ -203,7 +206,9 @@ def ingest_documents(
     docs_path = Path(docs_dir)
 
     stats = {"ingested": 0, "skipped": 0, "errors": 0}
-    existing_hashes = {d.doc_hash for d in store._store.values()}
+    # Über die Store-Schnittstelle, nicht store._store: das gibt es nur im In-Memory-Store,
+    # mit Postgres/pgvector brach der Ingest sonst mit AttributeError ab.
+    existing_hashes = store.existing_hashes()
 
     t0 = time.perf_counter()
     for meta in all_meta:
