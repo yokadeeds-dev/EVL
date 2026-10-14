@@ -131,3 +131,13 @@ def test_generate_happy_path_with_mocked_llm(client, monkeypatch):
     )
     assert r.status_code == 200, r.text
     assert r.json()["result"] == "GENERIERTER-TEXT"
+
+
+def test_ingest_generates_sandbox_docs_when_metadata_missing(client, tmp_path):
+    # Regression: /admin/ingest rief synthetic_docs.generate_synthetic_docs (existiert nicht)
+    # → AttributeError/500, sobald kein metadata.json im Zielordner lag.
+    admin = _auth(_token(client, "anwalt_a"))
+    r = client.post("/admin/ingest", headers=admin, json={"path": str(tmp_path / "kb")})
+    assert r.status_code == 200, r.text
+    assert r.json()["documents_ingested"] > 0
+    client.delete("/admin/kb-reset", headers=admin)
