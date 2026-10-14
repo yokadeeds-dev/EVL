@@ -165,3 +165,14 @@ def test_generation_skips_thinking_blocks():
 
     gen = generation.generate(Client(), generation.Retrieval([], []), "faq", "Test", use_cache=False)
     assert gen.result == "Antwort" and gen.served_model == "claude-opus-5-5"
+
+
+def test_ingest_only_uses_public_store_interface():
+    # Regression: ingest_documents darf keine Interna eines konkreten Stores nutzen
+    # (store._store gibt es nur im In-Memory-Store; mit pgvector -> AttributeError).
+    import inspect
+
+    import rag_engine
+
+    code = "\n".join(line.split("#", 1)[0] for line in inspect.getsource(rag_engine.ingest_documents).splitlines())
+    assert "._store" not in code
