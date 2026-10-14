@@ -41,3 +41,15 @@ def test_summary_ignores_truncated_rows_and_nulls(tmp_path, monkeypatch):
     s = answers.summarize("v")
     assert s["n_rows"] == 3 and s["fact_coverage"]["mean"] == 0.5 and s["fact_coverage"]["n"] == 2
     assert s["acl_safe"]["mean"] == 1.0 and s["errors"] == 0
+
+
+def test_fact_matching_tolerates_formatting_variants():
+    from eval.common import fact_present
+
+    # Regression: "50 %" (mit Leerzeichen) wurde als fehlender Fakt "50%" gewertet
+    assert fact_present("50%", "Reisezeiten werden zu 50 % abgerechnet.")
+    assert fact_present("450 EUR", "Partner: 450 € pro Stunde") and fact_present("450 EUR", "450 Euro")
+    assert not fact_present("450 EUR", "4500 EUR")
+    # Alternativen: korrekte Umformulierung darf nicht durchfallen
+    assert fact_present(["im System einzutragen", "Fallverwaltungssystem einzutragen"],
+                        "im Fallverwaltungssystem einzutragen")

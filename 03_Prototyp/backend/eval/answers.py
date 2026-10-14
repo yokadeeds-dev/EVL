@@ -38,7 +38,7 @@ import anthropic
 
 import generation
 import synthetic_docs
-from eval.common import EVAL_DIR, Item, build_engine, load_items, use_embedder
+from eval.common import EVAL_DIR, Item, build_engine, fact_present, load_items, use_embedder
 from eval.judge import ClaudeJudge, JudgeError, deepeval_model, judge_abstention, ragas_llm
 
 RUNS_DIR = EVAL_DIR / "runs"
@@ -57,7 +57,7 @@ def forbidden_names(item: Item) -> list[str]:
 def programmatic(item: Item, response: str) -> dict:
     low = response.lower()
     return {
-        "fact_coverage": (sum(f.lower() in low for f in item.facts) / len(item.facts)) if item.facts else None,
+        "fact_coverage": (sum(fact_present(f, response) for f in item.facts) / len(item.facts)) if item.facts else None,
         "acl_safe": float(not any(n.lower() in low for n in forbidden_names(item))),
     }
 
@@ -82,7 +82,11 @@ def judged(item: Item, response: str, contexts: list[str], judge: ClaudeJudge) -
 
     model = deepeval_model(judge)
     tc = LLMTestCase(input=item.question, actual_output=response, retrieval_context=contexts or ["(kein Kontext)"])
-    for key, metric in (("faithfulness_de", FaithfulnessMetric(model=model, async_mode=False)),
+    # penalize_ambiguous_claims: Default-DeepEval zählt nur WIDERSPRÜCHE als untreu — eine Aussage,
+    # die im Kontext schlicht fehlt ("idk"), gälte als treu. Grader-Check (oracle L01/M01) hat
+    # das gezeigt; für Halluzinationserkennung muss "nicht belegt" zählen.
+    for key, metric in (("faithfulness_de", FaithfulnessMetric(model=model, async_mode=False,
+                                                                penalize_ambiguous_claims=True)),
                         ("relevancy_de", AnswerRelevancyMetric(model=model, async_mode=False))):
         metric.measure(tc)
         if metric.error:
@@ -208,6 +212,23 @@ def summarize(variant: str) -> dict:
     return out
 
 
+def regrade(variant: str) -> int:
+    """Programmatische Metriken aus den gespeicherten Antworten neu berechnen (kein API-Aufruf).
+
+    Nach jeder Änderung an einem programmatischen Grader für ALLE Varianten ausführen —
+    sonst vergleicht man Scores von zwei verschiedenen Gradern.
+    """
+    items = {i.id: i for i in load_items()}
+    run = RUNS_DIR / variant
+    rows = [json.loads(line) for line in (run / "results.jsonl").read_text(encoding="utf-8").splitlines()]
+    for row in rows:
+        trace = json.loads((run / "traces" / f"{row['prompt_id']}_rep{row['rep']}.json").read_text(encoding="utf-8"))
+        row["grade"].update(programmatic(items[row["prompt_id"]], trace[-1]["content"]))
+    (run / "results.jsonl").write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows),
+                                       encoding="utf-8", newline="\n")
+    return len(rows)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--variant", default="baseline")
@@ -218,9 +239,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--embedder", choices=["hash", "e5"], default="e5")
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--summary-only", action="store_true")
+    ap.add_argument("--regrade", action="store_true", help="programmatische Metriken neu berechnen")
     args = ap.parse_args(argv)
 
-    if not args.summary_only:
+    if args.regrade:
+        print(f"{regrade(args.variant)} Zeilen neu bewertet")
+    elif not args.summary_only:
         items = load_items()
         if args.ids:
             wanted = set(args.ids.split(","))
