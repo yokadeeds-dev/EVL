@@ -83,6 +83,12 @@ class SemanticEmbedder:
 
 embedder = SemanticEmbedder()
 
+# Wie viel eines Treffers als LLM-Kontext übergeben wird. Früher fest 200 Zeichen —
+# die Evaluation hat gezeigt, dass damit 22 % der Pflicht-Fakten trotz korrekt
+# gefundenem Dokument das LLM nie erreichen (eval/RESULTS.md). Die Obergrenze
+# schützt die Token-Kosten bei langen hochgeladenen Dokumenten.
+CONTEXT_CHARS = int(os.getenv("RAG_CONTEXT_CHARS", "2000"))
+
 
 def _cosine(a: list[float], b: list[float]) -> float:
     return sum(x*y for x, y in zip(a, b))
@@ -278,7 +284,7 @@ class LegalRAGEngine:
         results = []
         for doc, score in raw_results:
             valid, reason = validate_result({"mandant_id": doc.mandant_id}, user)
-            excerpt = doc.text[:200].replace("\n", " ") + "…"
+            excerpt = doc.text if len(doc.text) <= CONTEXT_CHARS else doc.text[:CONTEXT_CHARS] + "…"
             results.append(QueryResult(
                 doc_id=doc.doc_id,
                 title=doc.title,
