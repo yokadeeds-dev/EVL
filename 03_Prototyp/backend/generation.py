@@ -44,6 +44,8 @@ class Generation:
     llm_latency_ms: float = 0.0
     input_tokens: int = 0
     output_tokens: int = 0
+    stop_reason: str = ""
+    served_model: str = ""          # Modell laut API-Antwort (kann von `model` abweichen)
     extra: dict = field(default_factory=dict)
 
     @property
@@ -97,7 +99,9 @@ def generate(llm_client: anthropic.Anthropic, retrieval: Retrieval, text_type: s
         messages=[{"role": "user", "content": user_prompt}],
     )
     llm_ms = (time.perf_counter() - t0) * 1000
-    text = message.content[0].text
+    # Nur Text-Blöcke: neuere Modelle (Opus 5.5+) liefern zuerst einen thinking-Block,
+    # content[0].text wäre dort ein AttributeError.
+    text = "".join(b.text for b in message.content if getattr(b, "type", "text") == "text")
     if use_cache:
         redis_backend.cache_set(ck, text)
     usage = getattr(message, "usage", None)
@@ -105,4 +109,6 @@ def generate(llm_client: anthropic.Anthropic, retrieval: Retrieval, text_type: s
         text, label, retrieval, model, cache_hit=False, llm_latency_ms=llm_ms,
         input_tokens=getattr(usage, "input_tokens", 0) or 0,
         output_tokens=getattr(usage, "output_tokens", 0) or 0,
+        stop_reason=getattr(message, "stop_reason", "") or "",
+        served_model=getattr(message, "model", "") or "",
     )
