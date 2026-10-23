@@ -1,6 +1,8 @@
 # EVL-2026-002 · KI-basierter Content-Assistant
 **Datum:** 2026-04-08 | **Verantwortlich:** Everlast AI | **Status:** Abgabebereit
 
+> Bewerbungsaufgabe (Case Study) für eine Bewerbung bei Everlast AI, April 2026. Kein Auftrag und keine Anstellung; Everlast AI ist hier der fiktive Auftraggeber der Aufgabenstellung.
+
 ---
 
 ## Problem in einem Satz
